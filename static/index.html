@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Weather Dashboard</title>
+<link rel="stylesheet" href="/static/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Weather Dashboard</h1>
+    <form id="search-form">
+      <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required />
+      <button type="submit">Search</button>
+    </form>
+  </header>
+
+  <main>
+    <section class="sidebar">
+      <h2>Tracked cities</h2>
+      <ul id="city-list"></ul>
+    </section>
+
+    <section class="content">
+      <div id="banner" class="banner hidden"></div>
+
+      <div id="empty-state" class="empty-state">
+        Search for a city above to pull its current weather.
+      </div>
+
+      <div id="dashboard" class="hidden">
+        <div class="cards">
+          <div class="card current">
+            <div class="card-label">Current conditions in <span id="city-name">-</span></div>
+            <div class="current-temp"><span id="temp">-</span>&deg;C</div>
+            <div id="weather-desc" class="weather-desc">-</div>
+            <div class="meta">Wind <span id="windspeed">-</span> km/h &middot; pulled <span id="pulled-at">-</span></div>
+            <button id="refresh-btn" type="button">Refresh (pull now)</button>
+          </div>
+
+          <div class="card metrics">
+            <div class="card-label">Derived metrics</div>
+            <dl>
+              <dt>Change since last pull</dt>
+              <dd id="metric-change">-</dd>
+              <dt id="metric-avg-label">Rolling average</dt>
+              <dd id="metric-avg">-</dd>
+              <dt>Min / Max (all history)</dt>
+              <dd id="metric-minmax">-</dd>
+              <dt>Pulls stored</dt>
+              <dd id="metric-count">-</dd>
+            </dl>
+          </div>
+
+          <div class="card itinerary">
+            <div class="card-label">Trip itinerary suggestion (LLM)</div>
+            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
+            <div id="itinerary-status" class="muted"></div>
+            <p id="itinerary-text"></p>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="card-label">Temperature history</div>
+          <canvas id="history-chart" height="90"></canvas>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
