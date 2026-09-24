@@ -49,6 +49,12 @@ button {
 button:hover { opacity: 0.9; }
 button:disabled { opacity: 0.5; cursor: default; }
 
+.unit-toggle { display: flex; }
+.unit-toggle button { border-radius: 0; background: transparent; color: inherit; border: 1px solid var(--accent); }
+.unit-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.unit-toggle button:last-child { border-radius: 0 6px 6px 0; }
+.unit-toggle button[aria-pressed="true"] { background: var(--accent); color: white; }
+
 main {
   display: flex;
   gap: 1.5rem;

@@ -14,6 +14,10 @@
       <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required />
       <button type="submit">Search</button>
     </form>
+    <div class="unit-toggle" role="group" aria-label="Temperature unit">
+      <button type="button" data-unit="C" aria-pressed="true">&deg;C</button>
+      <button type="button" data-unit="F" aria-pressed="false">&deg;F</button>
+    </div>
   </header>
 
   <main>
@@ -33,7 +37,7 @@
         <div class="cards">
           <div class="card current">
             <div class="card-label">Current conditions in <span id="city-name">-</span></div>
-            <div class="current-temp"><span id="temp">-</span>&deg;C</div>
+            <div class="current-temp"><span id="temp">-</span><span id="temp-unit">&deg;C</span></div>
             <div id="weather-desc" class="weather-desc">-</div>
             <div class="meta">Wind <span id="windspeed">-</span> km/h &middot; pulled <span id="pulled-at">-</span></div>
             <button id="refresh-btn" type="button">Refresh (pull now)</button>

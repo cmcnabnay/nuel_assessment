@@ -1,16 +1,16 @@
 # Weather Dashboard
 
-A small pipeline + dashboard built around [Open-Meteo](https://open-meteo.com) (free,
-no API key) that pulls weather for any city you type in, stores every pull as a
+This project is a small pipeline  dashboard built around [Open-Meteo](https://open-meteo.com)
+that pulls weather for any city you type in, stores every pull as a
 timestamped snapshot in SQLite, computes a few derived metrics from the accumulated
-history, and — on top of the base assignment — asks an open-source LLM via
+history, and asks an open-source LLM via
 [OpenRouter](https://openrouter.ai) to suggest a short itinerary based on the
 current forecast.
 
 ## Stack
 
 Python 3.10, FastAPI, SQLite (stdlib `sqlite3`), vanilla HTML/JS + Chart.js for the
-dashboard, pytest for tests. No frontend build step.
+dashboard, pytest for tests. 
 
 ## Setup
 
@@ -45,134 +45,115 @@ python scripts/pull_now.py                # re-pulls every city already tracked
 python scripts/pull_now.py London Tokyo    # re-pulls (or adds) specific cities
 ```
 
-Run this a few times over a few minutes (or wire it to real cron: `* * * * * cd
-/path/to/repo && .venv/bin/python scripts/pull_now.py`) to watch real history
-accumulate in the chart.
-
 **Run the tests:**
 
 ```bash
 pytest
 ```
 
-29 tests, all offline (external calls are mocked) — covering the derived-metric
+29 tests, all offline, covering the derived-metric
 math, the pull pipeline's success/failure paths, the API endpoints end to end,
 and the OpenRouter integration's error handling.
 
-## How it's put together
+## File System
 
-- `app/weather_api.py` — talks to Open-Meteo (geocoding + current/forecast),
-  wraps every network call so failures surface as typed exceptions instead of
-  raw `requests` errors.
-- `app/pull.py` — the pipeline step: resolves a city to coordinates (once, then
-  cached in the `cities` table), fetches weather, and inserts one row into
-  `snapshots`. This is the only place that writes to the DB.
-- `app/metrics.py` — pure functions over a plain list of floats (no DB, no
-  HTTP). Computes change-since-last-pull, rolling average, and min/max. Kept
-  deliberately dumb and dependency-free so it's easy to unit test — this is
-  exactly the code the assignment calls out as "easy to get subtly wrong."
-- `app/main.py` — the API layer. `/api/pull` is the only endpoint that touches
-  the external API; `/api/latest` and `/api/history` are pure DB reads, so
-  repeated dashboard loads or page refreshes never re-hit Open-Meteo.
-- `app/llm.py` — builds a prompt from the latest stored forecast and calls
-  OpenRouter. Isolated from the metrics pipeline on purpose: itinerary
-  generation is a presentation-layer add-on, not part of the data model.
-- `static/` — a single-page dashboard (no build step) using Chart.js from a CDN.
+app/: Python backend
+- main.py: Entry point, creates FastAPI, serves the dashboard page, defines API routes (/api/pull, /api/test, /api/history, /api/cities, /api/itinerary)
+- config.py: Reads settings from .env (DB_PATH, ROLLING_WINDOW, ALERT_THRESHOLD_C)
+- db.py: Opens SQLite connection and creates two tables (cities, snapshot) if not created already
+- weather_api.py: Communicates with OpenMeteo, looks p city's coordinates, then fetches current weather and forecast
+- pull.py: Looks up the city, fetches it weather, and saves a new snapshot row
+- metrics.py: Pure math on a list of temperatures, changes since last pull, rolling average, min/max, alert check
+- llm.py: Builds a prompt from the stored forecast, asks open router for an itinerary
+- errors.py: Defines three custom error types: UpstreamError, occurs when Open-Meteo-API fails/times out or if OpenRouter fails, CityNotFoundError, raised in weather_api.py when geocoding returns no match for a city name, ItineraryError, raised in llm.py when the OpenRouter Itinerary call fails
+- __init__.py: Empty file that marks app/ as a python package which lets code elsewhere do relative imports
 
-### Data model
+static/: Frontend
+- index.html: Frontend page for the dashboard, served by the FastAPI backend, defines a search form to lookup and track a city, a sidebar that lists tracked cities, a dashboard section with three cards, current conditions, derived metrics, and trip itinerary suggestion, and a temperature history chart
+- app.js: Client side logic that drives index.html, wires up the UI to the FastAPI backend's endpoints
+- style.css: Page styling
 
-```
-cities (id, query_name, display_name, country, latitude, longitude, timezone, created_at)
-snapshots (id, city_id, pulled_at, temperature, windspeed, weathercode, forecast_json)
-```
+test/: Automated tests
+- test_metrics.py: Unit tests for math functions in metrics.py
+- test_pull.py: Tests pull.py's pull_city() function against a temp SQLite DB 
+- test_api.py: End to end tests of the FastAPI routes using TestClient, covers pull --> latest --> history flow, change metrics across two pulls, 404 on Unknown city, the "stale data" fallback when a live pull fails but a prior valid snapshot exists, and a 503 when /api/intinerary is called without an OpenRouter API key
 
-`cities` is geocoded once and reused; `snapshots` accumulates one row per pull,
-so history actually builds up over time instead of being overwritten. `forecast_json`
-stores the 3-day daily forecast fetched alongside the current reading, so the
-itinerary endpoint can reuse it without a second external call.
+.venv/: Virtual Environment
+- Folder that python3 -m venv .venv created
+- Holds a private python interpreter, command line tools (bin/uvicorn, bin/pytest, bin/pip) and every installed library
 
-## Decisions and tradeoffs (the "deliberately left open" parts)
+weather.db: SQLite database file, created on first run
 
-**How a pull is triggered.** There's no real cron here — a pull happens either
-when someone searches/refreshes a city on the dashboard (`POST /api/pull`), or
-when `scripts/pull_now.py` is run manually. That script is written to be
-idempotent and cron-friendly (it just re-pulls whatever's already tracked), so
-with more time I'd wire it to actual cron or an APScheduler job inside the app
-rather than relying on a human or a page click to trigger it.
+## app/
+main.py
+- App setup
+  - lifespan() runs db_module.init_db() (init_db function in db.py) on startup to execute the schema defined in db.py, ensuring that the SQLite tables were created
+  - Creates the FastAPI application instance, the object that the rest of the file attaches routes to (line 24)
+  - Mounts static/ at /static and serves index.html at / (line 27)
+- Helpers
+  - _get_city_row(): Takes whatever city name the user typed and checks the database for a matching row by running a SQL query, if found it returns the row with the city's id, coordinates, display name, if not it returns None 
+  - _snapshots_for_city(): Gets a city's history of weather readings, if a date range was given, it appends those dates to the where clause in order to pull data from the specified date range
+  - _build_latest_payload(): Turns raw stored data into the finished answer that the frontend displays 
+    - Fetches all snapshots for the city snapshots = _snapshots_for_city(conn, city_row["id"])
+    - If snapshots is empty, raise a 404 error
+    - Extract just the temperatures temps = [s["temperature"] for s in snapshots]
+    - Grabs the most recent snapshot latest_snap = snapshots[-1] (list is cronological so the latest entry is the newest)
+    - Calculates the change since law pull change = change_since_last_pull(temps), a function from metrics.py that diffs the last two temperatures 
+    - Assembles the response dict in three parts: 
+      - city: static identity copied from city_row (name, country, coordinates)
+      - snapshot: The raw values from latest_snap (pulled_at, temperature, windspeed, weathercode)
+      - metrics: The computed layer
+    - Attach status/error: "status" defaults to "ok" but callers can pass "stale" if an error string was passed in
+- Routes
+  - GET /api/cities: Runs one query that selects every row in the cities table, sort alphabetically by display name, convert each sqlite3.Row to a plain dict and returns the list 
+  - POST /api/pull: Passes off two arguments to pull_city() (pull.py), conn, the open SQLite connection, so pull_city() can read/write the database itself, city the raw city name string the user typed in
+  - GET /api/latest: Determines what is the most recent weather datapoint exists for a city. Looks up whether the city already has a row in the DB, 404s if not, and otherwise runs the exact same _build_latest_payload() used by /api/pull on what is already stored
+  - GET /api/history: Looks up the city, then calls _snapshots_for_city() (function that builds the date filtered SQL query). Insead of running it through _build_latest_payload(), it maps each raw row to a dict which serves as the time series data that loadHistory() (app.js) uses to plot the Chart.js graph
+  - GET /api/itinerary: Looks up the city, queries directly for its most recent snapshot row. It pulls forecase_json the forecast blob that pull_city() saved to the DB when the pull request happened and decodes it. Calls suggest_itinerary() from llm.py, passing the city name, current conditions, and forecast, which builds a prompt and calls OpenRouters LLM API
 
-**Derived metrics.** I track: change since the last pull (absolute + %),
-a rolling average over the last N pulls (`ROLLING_WINDOW`, default 5), and
-min/max over all stored history for that city. Two judgment calls worth
-flagging:
-- **Percent change is `null` when the previous value is 0** (or returns `None`
-  generally when computing against a baseline of 0). This matters for
-  Celsius specifically — "22% colder" is meaningless when going from 0°C to
-  -2°C — so I return `null` rather than an infinite or nonsensical percentage.
-- **The alert threshold uses absolute degrees, not percent** (`ALERT_THRESHOLD_C`,
-  default 5). Percent swings are noisy near 0°C for temperature in a way they
-  aren't for, say, an exchange rate, so "moved 5+ degrees since last pull" is a
-  more meaningful flag than "moved 20%."
+metrics.py
+- change_since_last_pull(): Compares the last two readings
+  - If the input list has less than two values, it returns none
+  - absolute change is calculated
+  - percent change is calculated
+- rolling_average(): Returns the average of the last window values
+  - If there are fewer values than the window, returns all of them
+  - If window is 0 or None, it averages the whole history
+  - An empty list returns None
+- min_max(): Finds the maximum and minimum values from the values in the window
+- alert_triggered(): Takes the dict returned by change_since_last_pull (in main.py), returns True if the absolute change is at least threshold_c (set in config.py) in either direction
 
-**"Data pull failed" UX.** `POST /api/pull` never lets an Open-Meteo outage
-take down the app. If the live pull fails and a prior snapshot exists, it
-returns the last known-good snapshot with `status: "stale"` plus an `error`
-field, and the dashboard shows a yellow banner rather than breaking. If there's
-no prior data at all, it returns a 502 with a clear message. The same
-resilience applies to the itinerary feature: a missing key, a rate-limited
-model, a network timeout, or a model that returns no content (see below) all
-degrade to a clear "itinerary unavailable: ..." message instead of a crash.
+db.py
+- Imports sqlite3
+- Imports DB_PATH from config.py (defined in .env)
+- Defines SCHEMA
+  - Creates cities and snapshots table
+- get_connection(): Opens a new connection and sets it up
+- init_db()
+  - Runs the whole schema with executescript
+  - commits
+  - closes the connection
+  - Runs once when the app starts in the FastAPI lifespan hook (main.py)
 
-**Multi-city tracking (stretch goal).** Implemented as a first-class part of
-the data model rather than an add-on — every searched city gets its own row in
-`cities` and its own accumulating history in `snapshots`. The sidebar lists
-every previously-pulled city; clicking one reads its `/api/latest` +
-`/api/history` without triggering a new external pull.
-
-**Caching (stretch goal).** `/api/latest` and `/api/history` only ever read
-from SQLite — the only endpoint that calls Open-Meteo is `/api/pull`. The
-itinerary endpoint also avoids a second Open-Meteo call by reusing the daily
-forecast JSON already stored alongside the latest snapshot.
-
-**Alert/threshold (stretch goal).** `/api/latest`'s `metrics.alert.triggered`
-flags when the absolute temperature change since the last pull is ≥
-`ALERT_THRESHOLD_C` (default 5°C); the dashboard shows a warning next to the
-change figure when that fires.
-
-**Chart library.** Chart.js via CDN — function over form, and it's the
-smallest amount of code to get an interactive line chart with tooltips.
-
-**Itinerary feature (added on top of the base assignment).** This is the
-piece I added beyond the spec: typing a city not only pulls/stores weather,
-it also lets you ask an OpenRouter model (default:
-`liquid/lfm-2.5-2.6b:free` — no cost, configurable via `OPENROUTER_MODEL`) to
-suggest a short day-by-day itinerary based on the stored current conditions
-and 3-day forecast. One non-obvious bug I hit and fixed while testing live:
-some free-tier OpenRouter models are "reasoning" models that spend part of
-`max_tokens` on hidden chain-of-thought before writing a visible answer — with
-a low token budget they can return `content: null` entirely. `app/llm.py`
-uses a generous `max_tokens` (1600) and explicitly checks for empty/`None`
-content, raising a clear `ItineraryError` instead of crashing on `.strip()`.
-This is covered by a regression test in `tests/test_llm.py`.
-
-## What I'd do differently with more time
-
-- A real scheduler (APScheduler in-process, or actual cron) instead of manual/
-  dashboard-triggered pulls.
-- Store per-city rolling-window/threshold config instead of one global env var.
-- A small in-memory or Redis cache in front of `/api/latest` for high-traffic
-  cities, on top of the DB-only reads that already avoid re-hitting Open-Meteo.
-- Debounce/cache itinerary requests per city+snapshot so re-clicking "Suggest
-  an itinerary" for unchanged data doesn't re-spend LLM tokens.
-- Swap the free OpenRouter model for a paid one behind a feature flag, since
-  free-tier models can be rate-limited or capacity-constrained (observed this
-  firsthand while testing — see above).
-
-## AI tool usage
-
-Built with Claude (Claude Code) as a pair-programming assistant, per the
-assignment's stated allowance. I'm happy to walk through any part of the
-implementation.
-
-## Time spent
-
-_Fill in before submitting — an honest number, no penalty either way._
+llm.py
+- Imports ItineraryError from errors.py
+- Defines OpenRouter URL, timeout seconds, and default model
+- build_prompt(): Turns the weather data into the text the model reads
+  - Takes three inputs
+    - city_display_name
+    - current: dictionary of temperature, windspeed, weathercode from the latest snapshot
+    - daily: OpenMeteo's forecast
+  - Adds a City, Current, and weather code line to the lines dict
+  - If daily (dict with three day OpenMeteo forecast) has dates, it loops over daily["time"] and reads position i from each list, giving one line per day
+  - Appends max and min temperature, percipitation and weather code to lines
+  - Adds the instructions
+  - Joins lines with \n
+- suggest_itinerary(): Takes same inputs as build_prompt(), calls the LLM, and returns the itinerary text
+  - Defines api key from environmental variables, raises error if there is no key
+  - Defines model from environment variables
+  - Defines body portion of the HTTP request sent to OpenRouter
+  - Defines headers portion of the HTTP request
+  - Calls model, saves request.Response object to resp, raises error if response is not returned
+  - Saves request.Response object body as a JSON
+  - Takes the model's reply text out of the response JSON
+  - Raises an error if the model returns a response object but no content

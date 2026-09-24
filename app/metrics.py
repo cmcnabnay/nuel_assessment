@@ -1,11 +1,3 @@
-"""Derived metrics computed from a plain list of temperature values, ordered oldest -> newest.
-
-Kept independent of the database and HTTP layer on purpose: these are the easiest
-place to introduce a subtle bug (percent-change sign, off-by-one windows, div-by-zero
-near 0C), so they're unit tested directly on plain floats.
-"""
-
-
 def change_since_last_pull(values):
     """Absolute and percent change between the last two pulls, or None if <2 pulls exist."""
     if len(values) < 2:

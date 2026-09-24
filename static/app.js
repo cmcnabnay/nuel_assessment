@@ -8,7 +8,7 @@ const WEATHER_CODES = {
   95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Thunderstorm with heavy hail",
 };
 
-const state = { currentCity: null, chart: null };
+const state = { currentCity: null, chart: null, lastPayload: null, unit: loadUnit() };
 
 const el = (id) => document.getElementById(id);
 
@@ -36,20 +36,38 @@ function weatherDescription(code) {
   return WEATHER_CODES[code] ?? `Weather code ${code}`;
 }
 
+function loadUnit() {
+  try {
+    return localStorage.getItem("unit") === "F" ? "F" : "C";
+  } catch {
+    return "C";
+  }
+}
+
+// Backend stores Celsius; Fahrenheit is converted here for display only.
+const round1 = (n) => Math.round(n * 10) / 10;
+const toUnit = (c) => (state.unit === "F" ? round1(c * 9 / 5 + 32) : c);
+// A temperature *difference* converts without the +32 offset.
+const deltaToUnit = (dc) => (state.unit === "F" ? round1(dc * 9 / 5) : dc);
+const deg = () => `°${state.unit}`;
+
 function formatChange(change) {
   if (!change) return "n/a (need 2+ pulls)";
   const arrow = change.absolute > 0 ? "↑" : change.absolute < 0 ? "↓" : "→";
   const pct = change.percent === null ? "" : ` (${change.percent > 0 ? "+" : ""}${change.percent}%)`;
-  return `${arrow} ${change.absolute > 0 ? "+" : ""}${change.absolute}°C${pct}`;
+  return `${arrow} ${change.absolute > 0 ? "+" : ""}${deltaToUnit(change.absolute)}${deg()}${pct}`;
 }
 
 function renderLatest(payload) {
+  const isRerender = payload === state.lastPayload;
+  state.lastPayload = payload;
   state.currentCity = payload.city.query_name;
   el("dashboard").classList.remove("hidden");
   el("empty-state").classList.add("hidden");
 
   el("city-name").textContent = payload.city.display_name + (payload.city.country ? `, ${payload.city.country}` : "");
-  el("temp").textContent = payload.snapshot.temperature;
+  el("temp").textContent = toUnit(payload.snapshot.temperature);
+  el("temp-unit").textContent = deg();
   el("weather-desc").textContent = weatherDescription(payload.snapshot.weathercode);
   el("windspeed").textContent = payload.snapshot.windspeed;
   el("pulled-at").textContent = new Date(payload.snapshot.pulled_at).toLocaleString();
@@ -57,12 +75,12 @@ function renderLatest(payload) {
   const m = payload.metrics;
   el("metric-change").innerHTML = formatChange(m.change_since_last_pull);
   el("metric-avg-label").textContent = `Rolling average (last ${m.rolling_average.window} pulls)`;
-  el("metric-avg").textContent = m.rolling_average.value !== null ? `${m.rolling_average.value}°C` : "n/a";
-  el("metric-minmax").textContent = m.min_max ? `${m.min_max.min}°C / ${m.min_max.max}°C` : "n/a";
+  el("metric-avg").textContent = m.rolling_average.value !== null ? `${toUnit(m.rolling_average.value)}${deg()}` : "n/a";
+  el("metric-minmax").textContent = m.min_max ? `${toUnit(m.min_max.min)}${deg()} / ${toUnit(m.min_max.max)}${deg()}` : "n/a";
   el("metric-count").textContent = m.pull_count;
 
   if (m.alert.triggered) {
-    el("metric-change").innerHTML += ` <span class="alert-flag">⚠ moved ≥ ${m.alert.threshold_c}°C</span>`;
+    el("metric-change").innerHTML += ` <span class="alert-flag">⚠ moved ≥ ${deltaToUnit(m.alert.threshold_c)}${deg()}</span>`;
   }
 
   if (payload.status === "stale") {
@@ -71,8 +89,10 @@ function renderLatest(payload) {
     hideBanner();
   }
 
-  el("itinerary-text").textContent = "";
-  el("itinerary-status").textContent = "";
+  if (!isRerender) {
+    el("itinerary-text").textContent = "";
+    el("itinerary-status").textContent = "";
+  }
 
   loadHistory(payload.city.query_name);
   refreshCityList(payload.city.query_name);
@@ -82,7 +102,7 @@ async function loadHistory(city) {
   const rows = await api(`/api/history?city=${encodeURIComponent(city)}`);
   const ctx = el("history-chart").getContext("2d");
   const labels = rows.map((r) => new Date(r.pulled_at).toLocaleString());
-  const temps = rows.map((r) => r.temperature);
+  const temps = rows.map((r) => toUnit(r.temperature));
 
   if (state.chart) state.chart.destroy();
   state.chart = new Chart(ctx, {
@@ -90,7 +110,7 @@ async function loadHistory(city) {
     data: {
       labels,
       datasets: [{
-        label: "Temperature (°C)",
+        label: `Temperature (${deg()})`,
         data: temps,
         borderColor: "#2563eb",
         backgroundColor: "rgba(37,99,235,0.1)",
@@ -102,7 +122,7 @@ async function loadHistory(city) {
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { y: { title: { display: true, text: "°C" } } },
+      scales: { y: { title: { display: true, text: deg() } } },
     },
   });
 }
@@ -149,6 +169,22 @@ el("search-form").addEventListener("submit", (e) => {
 el("refresh-btn").addEventListener("click", () => {
   if (state.currentCity) pullCity(state.currentCity);
 });
+
+function setUnit(unit) {
+  state.unit = unit;
+  try {
+    localStorage.setItem("unit", unit);
+  } catch {}
+  document.querySelectorAll(".unit-toggle button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.unit === unit));
+  });
+  if (state.lastPayload) renderLatest(state.lastPayload);
+}
+
+document.querySelectorAll(".unit-toggle button").forEach((b) => {
+  b.addEventListener("click", () => setUnit(b.dataset.unit));
+});
+setUnit(state.unit);
 
 el("itinerary-btn").addEventListener("click", async () => {
   if (!state.currentCity) return;
