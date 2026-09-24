@@ -17,6 +17,8 @@ def make_weather(temperature):
     return {
         "temperature": temperature,
         "windspeed": 5.0,
+        "humidity": 60.0,
+        "precipitation": 0.0,
         "weathercode": 0,
         "daily": {
             "time": ["2026-09-22"],
@@ -46,13 +48,15 @@ def test_pull_then_latest_and_history(client, monkeypatch):
     assert first.status_code == 200
     body = first.json()
     assert body["snapshot"]["temperature"] == 20.0
-    assert body["metrics"]["change_since_last_pull"] is None  # only one pull so far
+    assert body["metrics"]["series"]["temperature"]["change_since_last_pull"] is None  # only one pull so far
+    assert body["snapshot"]["humidity"] == 60.0
     assert body["status"] == "ok"
 
     monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(23.0))
     second = client.post("/api/pull", params={"city": "Paris"})
     body2 = second.json()
-    assert body2["metrics"]["change_since_last_pull"] == {"absolute": 3.0, "percent": 15.0}
+    assert body2["metrics"]["series"]["temperature"]["change_since_last_pull"] == {"absolute": 3.0, "percent": 15.0}
+    assert body2["metrics"]["series"]["humidity"]["change_since_last_pull"] == {"absolute": 0.0, "percent": 0.0}
     assert body2["metrics"]["pull_count"] == 2
 
     hist = client.get("/api/history", params={"city": "Paris"})
@@ -106,3 +110,20 @@ def test_itinerary_without_api_key_returns_503(client, monkeypatch):
     resp = client.get("/api/itinerary", params={"city": "Paris"})
     assert resp.status_code == 503
     assert "error" in resp.json()
+
+
+def test_series_metrics_skip_rows_missing_a_column(client, monkeypatch):
+    """Snapshots stored before humidity/precipitation existed have NULLs; metrics should ignore them."""
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    old = make_weather(20.0)
+    del old["humidity"], old["precipitation"]
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: old)
+    client.post("/api/pull", params={"city": "Paris"})
+
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(21.0))
+    body = client.post("/api/pull", params={"city": "Paris"}).json()
+
+    humidity = body["metrics"]["series"]["humidity"]
+    assert humidity["change_since_last_pull"] is None  # only one non-null reading
+    assert humidity["rolling_average"] == 60.0
+    assert body["metrics"]["series"]["temperature"]["change_since_last_pull"]["absolute"] == 1.0

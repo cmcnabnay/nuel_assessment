@@ -55,6 +55,16 @@ button:disabled { opacity: 0.5; cursor: default; }
 .unit-toggle button:last-child { border-radius: 0 6px 6px 0; }
 .unit-toggle button[aria-pressed="true"] { background: var(--accent); color: white; }
 
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; overflow-x: auto; }
+.tabs button {
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
 main {
   display: flex;
   gap: 1.5rem;
@@ -117,7 +127,7 @@ main {
   margin-bottom: 0.5rem;
 }
 
-.current-temp { font-size: 2.5rem; font-weight: 600; line-height: 1; }
+.current-value { font-size: 2.5rem; font-weight: 600; line-height: 1; }
 .weather-desc { color: var(--muted); margin: 0.25rem 0; }
 .meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.75rem; }
 

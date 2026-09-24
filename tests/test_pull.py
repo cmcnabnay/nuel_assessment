@@ -17,6 +17,8 @@ def make_weather(temperature):
     return {
         "temperature": temperature,
         "windspeed": 10.0,
+        "humidity": 60.0,
+        "precipitation": 0.0,
         "weathercode": 1,
         "daily": {
             "time": ["2026-09-22"],
@@ -91,3 +93,20 @@ def test_pull_city_propagates_upstream_error_without_writing_partial_snapshot(co
 
     # the city row may have been created, but no snapshot should exist
     assert conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0] == 0
+
+
+def test_init_db_adds_new_columns_to_existing_database(tmp_path):
+    path = str(tmp_path / "old.db")
+    old = db_module.get_connection(path)
+    old.execute(
+        "CREATE TABLE snapshots (id INTEGER PRIMARY KEY, city_id INTEGER, pulled_at TEXT, "
+        "temperature REAL, windspeed REAL, weathercode INTEGER, forecast_json TEXT)"
+    )
+    old.close()
+
+    db_module.init_db(path)
+
+    conn = db_module.get_connection(path)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(snapshots)")}
+    conn.close()
+    assert {"humidity", "precipitation"} <= columns

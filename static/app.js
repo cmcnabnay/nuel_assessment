@@ -8,7 +8,14 @@ const WEATHER_CODES = {
   95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Thunderstorm with heavy hail",
 };
 
-const state = { currentCity: null, chart: null, lastPayload: null, unit: loadUnit() };
+const state = {
+  currentCity: null,
+  chart: null,
+  lastPayload: null,
+  history: [],
+  unit: loadPref("unit", ["C", "F"]),
+  series: loadPref("series", ["temperature", "precipitation", "windspeed", "humidity"]),
+};
 
 const el = (id) => document.getElementById(id);
 
@@ -36,12 +43,20 @@ function weatherDescription(code) {
   return WEATHER_CODES[code] ?? `Weather code ${code}`;
 }
 
-function loadUnit() {
+// Returns the stored value if it's one of `allowed`, else the first allowed value.
+function loadPref(key, allowed) {
   try {
-    return localStorage.getItem("unit") === "F" ? "F" : "C";
+    const v = localStorage.getItem(key);
+    return allowed.includes(v) ? v : allowed[0];
   } catch {
-    return "C";
+    return allowed[0];
   }
+}
+
+function savePref(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
 }
 
 // Backend stores Celsius; Fahrenheit is converted here for display only.
@@ -50,12 +65,25 @@ const toUnit = (c) => (state.unit === "F" ? round1(c * 9 / 5 + 32) : c);
 // A temperature *difference* converts without the +32 offset.
 const deltaToUnit = (dc) => (state.unit === "F" ? round1(dc * 9 / 5) : dc);
 const deg = () => `°${state.unit}`;
+const identity = (v) => v;
 
-function formatChange(change) {
+// Per-tab display config. `value` converts an absolute reading, `delta` a difference.
+const SERIES = {
+  temperature: { label: "Temperature", unit: deg, value: toUnit, delta: deltaToUnit, chart: "line", color: "#2563eb" },
+  precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#0891b2" },
+  windspeed: { label: "Wind speed", unit: () => " km/h", value: identity, delta: identity, chart: "line", color: "#7c3aed" },
+  humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#059669" },
+};
+
+function fmt(cfg, v) {
+  return v === null || v === undefined ? "n/a" : `${cfg.value(v)}${cfg.unit()}`;
+}
+
+function formatChange(cfg, change) {
   if (!change) return "n/a (need 2+ pulls)";
   const arrow = change.absolute > 0 ? "↑" : change.absolute < 0 ? "↓" : "→";
   const pct = change.percent === null ? "" : ` (${change.percent > 0 ? "+" : ""}${change.percent}%)`;
-  return `${arrow} ${change.absolute > 0 ? "+" : ""}${deltaToUnit(change.absolute)}${deg()}${pct}`;
+  return `${arrow} ${change.absolute > 0 ? "+" : ""}${cfg.delta(change.absolute)}${cfg.unit()}${pct}`;
 }
 
 function renderLatest(payload) {
@@ -66,22 +94,10 @@ function renderLatest(payload) {
   el("empty-state").classList.add("hidden");
 
   el("city-name").textContent = payload.city.display_name + (payload.city.country ? `, ${payload.city.country}` : "");
-  el("temp").textContent = toUnit(payload.snapshot.temperature);
-  el("temp-unit").textContent = deg();
   el("weather-desc").textContent = weatherDescription(payload.snapshot.weathercode);
-  el("windspeed").textContent = payload.snapshot.windspeed;
   el("pulled-at").textContent = new Date(payload.snapshot.pulled_at).toLocaleString();
-
-  const m = payload.metrics;
-  el("metric-change").innerHTML = formatChange(m.change_since_last_pull);
-  el("metric-avg-label").textContent = `Rolling average (last ${m.rolling_average.window} pulls)`;
-  el("metric-avg").textContent = m.rolling_average.value !== null ? `${toUnit(m.rolling_average.value)}${deg()}` : "n/a";
-  el("metric-minmax").textContent = m.min_max ? `${toUnit(m.min_max.min)}${deg()} / ${toUnit(m.min_max.max)}${deg()}` : "n/a";
-  el("metric-count").textContent = m.pull_count;
-
-  if (m.alert.triggered) {
-    el("metric-change").innerHTML += ` <span class="alert-flag">⚠ moved ≥ ${deltaToUnit(m.alert.threshold_c)}${deg()}</span>`;
-  }
+  el("metric-count").textContent = payload.metrics.pull_count;
+  renderSeries();
 
   if (payload.status === "stale") {
     showBanner(`Live pull failed, showing last known good data. (${payload.error || ""})`, "stale");
@@ -94,26 +110,58 @@ function renderLatest(payload) {
     el("itinerary-status").textContent = "";
   }
 
-  loadHistory(payload.city.query_name);
-  refreshCityList(payload.city.query_name);
+  if (!isRerender) {
+    loadHistory(payload.city.query_name);
+    refreshCityList(payload.city.query_name);
+  } else {
+    renderChart();
+  }
+}
+
+// Renders the selected tab's current value and derived metrics.
+function renderSeries() {
+  const payload = state.lastPayload;
+  if (!payload) return;
+  const cfg = SERIES[state.series];
+  const m = payload.metrics;
+  const s = m.series[state.series];
+
+  el("series-name").textContent = cfg.label.toLowerCase();
+  el("series-current").textContent = fmt(cfg, payload.snapshot[state.series]);
+  el("metric-change").innerHTML = formatChange(cfg, s.change_since_last_pull);
+  el("metric-avg-label").textContent = `Rolling average (last ${m.rolling_window} pulls)`;
+  el("metric-avg").textContent = fmt(cfg, s.rolling_average);
+  el("metric-minmax").textContent = s.min_max ? `${fmt(cfg, s.min_max.min)} / ${fmt(cfg, s.min_max.max)}` : "n/a";
+
+  if (state.series === "temperature" && m.alert.triggered) {
+    el("metric-change").innerHTML += ` <span class="alert-flag">⚠ moved ≥ ${cfg.delta(m.alert.threshold_c)}${cfg.unit()}</span>`;
+  }
 }
 
 async function loadHistory(city) {
-  const rows = await api(`/api/history?city=${encodeURIComponent(city)}`);
-  const ctx = el("history-chart").getContext("2d");
-  const labels = rows.map((r) => new Date(r.pulled_at).toLocaleString());
-  const temps = rows.map((r) => toUnit(r.temperature));
+  state.history = await api(`/api/history?city=${encodeURIComponent(city)}`);
+  renderChart();
+}
 
+function renderChart() {
+  const cfg = SERIES[state.series];
+  const ctx = el("history-chart").getContext("2d");
+  const labels = state.history.map((r) => new Date(r.pulled_at).toLocaleString());
+  // null (pre-migration rows) leaves a gap in the chart rather than plotting 0.
+  const values = state.history.map((r) => (r[state.series] === null ? null : cfg.value(r[state.series])));
+  const unit = cfg.unit().trim();
+
+  el("chart-title").textContent = cfg.label;
   if (state.chart) state.chart.destroy();
   state.chart = new Chart(ctx, {
-    type: "line",
+    type: cfg.chart,
     data: {
       labels,
       datasets: [{
-        label: `Temperature (${deg()})`,
-        data: temps,
-        borderColor: "#2563eb",
-        backgroundColor: "rgba(37,99,235,0.1)",
+        label: `${cfg.label} (${unit})`,
+        data: values,
+        borderColor: cfg.color,
+        backgroundColor: `${cfg.color}33`,
         tension: 0.25,
         pointRadius: 3,
         fill: true,
@@ -122,7 +170,7 @@ async function loadHistory(city) {
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { y: { title: { display: true, text: deg() } } },
+      scales: { y: { beginAtZero: state.series !== "temperature", title: { display: true, text: unit } } },
     },
   });
 }
@@ -172,9 +220,7 @@ el("refresh-btn").addEventListener("click", () => {
 
 function setUnit(unit) {
   state.unit = unit;
-  try {
-    localStorage.setItem("unit", unit);
-  } catch {}
+  savePref("unit", unit);
   document.querySelectorAll(".unit-toggle button").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.unit === unit));
   });
@@ -185,6 +231,21 @@ document.querySelectorAll(".unit-toggle button").forEach((b) => {
   b.addEventListener("click", () => setUnit(b.dataset.unit));
 });
 setUnit(state.unit);
+
+function setSeries(series) {
+  state.series = series;
+  savePref("series", series);
+  document.querySelectorAll(".tabs button").forEach((b) => {
+    b.setAttribute("aria-selected", String(b.dataset.series === series));
+  });
+  el("unit-toggle").classList.toggle("hidden", series !== "temperature");
+  if (state.lastPayload) renderLatest(state.lastPayload);
+}
+
+document.querySelectorAll(".tabs button").forEach((b) => {
+  b.addEventListener("click", () => setSeries(b.dataset.series));
+});
+setSeries(state.series);
 
 el("itinerary-btn").addEventListener("click", async () => {
   if (!state.currentCity) return;

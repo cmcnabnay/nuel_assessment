@@ -35,7 +35,7 @@ def fetch_weather(latitude, longitude, tz="auto"):
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "current_weather": "true",
+        "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code",
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
         "forecast_days": 3,
         "timezone": tz or "auto",
@@ -47,13 +47,15 @@ def fetch_weather(latitude, longitude, tz="auto"):
         raise UpstreamError(f"Forecast request failed: {exc}") from exc
 
     data = resp.json()
-    current = data.get("current_weather")
+    current = data.get("current")
     if not current:
-        raise UpstreamError("Forecast response was missing 'current_weather'")
+        raise UpstreamError("Forecast response was missing 'current'")
 
     return {
-        "temperature": current["temperature"],
-        "windspeed": current.get("windspeed"),
-        "weathercode": current.get("weathercode"),
+        "temperature": current["temperature_2m"],
+        "windspeed": current.get("wind_speed_10m"),
+        "humidity": current.get("relative_humidity_2m"),
+        "precipitation": current.get("precipitation"),
+        "weathercode": current.get("weather_code"),
         "daily": data.get("daily"),
     }

@@ -14,7 +14,7 @@
       <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required />
       <button type="submit">Search</button>
     </form>
-    <div class="unit-toggle" role="group" aria-label="Temperature unit">
+    <div id="unit-toggle" class="unit-toggle" role="group" aria-label="Temperature unit">
       <button type="button" data-unit="C" aria-pressed="true">&deg;C</button>
       <button type="button" data-unit="F" aria-pressed="false">&deg;F</button>
     </div>
@@ -37,10 +37,30 @@
         <div class="cards">
           <div class="card current">
             <div class="card-label">Current conditions in <span id="city-name">-</span></div>
-            <div class="current-temp"><span id="temp">-</span><span id="temp-unit">&deg;C</span></div>
             <div id="weather-desc" class="weather-desc">-</div>
-            <div class="meta">Wind <span id="windspeed">-</span> km/h &middot; pulled <span id="pulled-at">-</span></div>
+            <div class="meta">Pulled <span id="pulled-at">-</span> &middot; <span id="metric-count">-</span> pulls stored</div>
             <button id="refresh-btn" type="button">Refresh (pull now)</button>
+          </div>
+
+          <div class="card itinerary">
+            <div class="card-label">Trip itinerary suggestion (LLM)</div>
+            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
+            <div id="itinerary-status" class="muted"></div>
+            <p id="itinerary-text"></p>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Weather metric">
+          <button type="button" role="tab" data-series="temperature">Temperature</button>
+          <button type="button" role="tab" data-series="precipitation">Precipitation</button>
+          <button type="button" role="tab" data-series="windspeed">Wind speed</button>
+          <button type="button" role="tab" data-series="humidity">Humidity</button>
+        </div>
+
+        <div class="cards" role="tabpanel">
+          <div class="card">
+            <div class="card-label">Current <span id="series-name">-</span></div>
+            <div class="current-value" id="series-current">-</div>
           </div>
 
           <div class="card metrics">
@@ -52,21 +72,12 @@
               <dd id="metric-avg">-</dd>
               <dt>Min / Max (all history)</dt>
               <dd id="metric-minmax">-</dd>
-              <dt>Pulls stored</dt>
-              <dd id="metric-count">-</dd>
             </dl>
-          </div>
-
-          <div class="card itinerary">
-            <div class="card-label">Trip itinerary suggestion (LLM)</div>
-            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
-            <div id="itinerary-status" class="muted"></div>
-            <p id="itinerary-text"></p>
           </div>
         </div>
 
         <div class="chart-card">
-          <div class="card-label">Temperature history</div>
+          <div class="card-label"><span id="chart-title">Temperature</span> history</div>
           <canvas id="history-chart" height="90"></canvas>
         </div>
       </div>

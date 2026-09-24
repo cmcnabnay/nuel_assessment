@@ -55,14 +55,27 @@ def _snapshots_for_city(conn, city_id, start=None, end=None, limit=None):
     return rows
 
 
+# Snapshot columns that get their own dashboard tab and derived metrics.
+SERIES = ("temperature", "precipitation", "windspeed", "humidity")
+
+
+def _series_metrics(values):
+    # Rows stored before a column existed hold NULL; skip them rather than treat as 0.
+    values = [v for v in values if v is not None]
+    return {
+        "change_since_last_pull": change_since_last_pull(values),
+        "rolling_average": rolling_average(values, ROLLING_WINDOW),
+        "min_max": min_max(values),
+    }
+
+
 def _build_latest_payload(conn, city_row, status="ok", error=None):
     snapshots = _snapshots_for_city(conn, city_row["id"])
     if not snapshots:
         raise HTTPException(status_code=404, detail="No snapshots stored for this city yet.")
 
-    temps = [s["temperature"] for s in snapshots]
     latest_snap = snapshots[-1]
-    change = change_since_last_pull(temps)
+    series = {name: _series_metrics([s[name] for s in snapshots]) for name in SERIES}
 
     payload = {
         "city": {
@@ -74,18 +87,16 @@ def _build_latest_payload(conn, city_row, status="ok", error=None):
         },
         "snapshot": {
             "pulled_at": latest_snap["pulled_at"],
-            "temperature": latest_snap["temperature"],
-            "windspeed": latest_snap["windspeed"],
+            **{name: latest_snap[name] for name in SERIES},
             "weathercode": latest_snap["weathercode"],
         },
         "metrics": {
             "pull_count": len(snapshots),
-            "change_since_last_pull": change,
-            "rolling_average": {"window": ROLLING_WINDOW, "value": rolling_average(temps, ROLLING_WINDOW)},
-            "min_max": min_max(temps),
+            "rolling_window": ROLLING_WINDOW,
+            "series": series,
             "alert": {
                 "threshold_c": ALERT_THRESHOLD_C,
-                "triggered": alert_triggered(change, ALERT_THRESHOLD_C),
+                "triggered": alert_triggered(series["temperature"]["change_since_last_pull"], ALERT_THRESHOLD_C),
             },
         },
         "status": status,
@@ -158,8 +169,7 @@ def history(
         return [
             {
                 "pulled_at": s["pulled_at"],
-                "temperature": s["temperature"],
-                "windspeed": s["windspeed"],
+                **{name: s[name] for name in SERIES},
                 "weathercode": s["weathercode"],
             }
             for s in snaps

@@ -21,12 +21,18 @@ CREATE TABLE IF NOT EXISTS snapshots (
     pulled_at TEXT NOT NULL,
     temperature REAL NOT NULL,
     windspeed REAL,
+    humidity REAL,
+    precipitation REAL,
     weathercode INTEGER,
     forecast_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_city_time ON snapshots (city_id, pulled_at);
 """
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add them to
+# an existing weather.db, so init_db adds any that are missing.
+ADDED_SNAPSHOT_COLUMNS = {"humidity": "REAL", "precipitation": "REAL"}
 
 
 def get_connection(db_path=None):
@@ -40,6 +46,10 @@ def init_db(db_path=None):
     conn = get_connection(db_path)
     try:
         conn.executescript(SCHEMA)
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(snapshots)")}
+        for column, col_type in ADDED_SNAPSHOT_COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE snapshots ADD COLUMN {column} {col_type}")
         conn.commit()
     finally:
         conn.close()

@@ -51,14 +51,17 @@ def pull_city(conn, name):
     pulled_at = now_iso()
     conn.execute(
         """
-        INSERT INTO snapshots (city_id, pulled_at, temperature, windspeed, weathercode, forecast_json)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO snapshots
+            (city_id, pulled_at, temperature, windspeed, humidity, precipitation, weathercode, forecast_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             city["id"],
             pulled_at,
             weather["temperature"],
             weather["windspeed"],
+            weather.get("humidity"),
+            weather.get("precipitation"),
             weather["weathercode"],
             json.dumps(weather["daily"]) if weather["daily"] else None,
         ),
