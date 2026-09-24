@@ -110,3 +110,17 @@ def test_init_db_adds_new_columns_to_existing_database(tmp_path):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(snapshots)")}
     conn.close()
     assert {"humidity", "precipitation"} <= columns
+
+
+def test_geocode_by_id_maps_unknown_id_to_city_not_found(monkeypatch):
+    from app import weather_api
+
+    class Resp:
+        status_code = 400
+
+        def raise_for_status(self):
+            raise AssertionError("should not be reached")
+
+    monkeypatch.setattr(weather_api.requests, "get", lambda *a, **k: Resp())
+    with pytest.raises(CityNotFoundError):
+        weather_api.geocode_by_id(999999999)

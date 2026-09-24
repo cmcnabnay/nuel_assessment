@@ -29,6 +29,7 @@ header {
 header h1 { font-size: 1.25rem; margin: 0; }
 
 #search-form { display: flex; gap: 0.5rem; flex: 1; max-width: 420px; }
+.search-box { position: relative; flex: 1; display: flex; }
 #city-input {
   flex: 1;
   padding: 0.5rem 0.75rem;
@@ -36,6 +37,25 @@ header h1 { font-size: 1.25rem; margin: 0; }
   border-radius: 6px;
   font-size: 0.95rem;
 }
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.suggestions li { padding: 0.45rem 0.75rem; cursor: pointer; font-size: 0.9rem; }
+.suggestions li .region { color: var(--muted); font-size: 0.8rem; }
+.suggestions li[aria-selected="true"], .suggestions li:hover { background: #eef1f6; }
+.suggestions li.empty { color: var(--muted); cursor: default; background: none; }
 
 button {
   padding: 0.5rem 0.9rem;
@@ -150,7 +170,8 @@ dd { margin: 0; font-size: 0.95rem; }
 
 @media (prefers-color-scheme: dark) {
   body { background: #0f1117; color: #e5e7eb; }
-  header, .card, .chart-card { background: #171a23; border-color: #262b38; }
+  header, .card, .chart-card, .suggestions { background: #171a23; border-color: #262b38; }
+  .suggestions li[aria-selected="true"], .suggestions li:hover { background: #1f2430; }
   #city-list li:hover { background: #1f2430; }
   .empty-state { border-color: #262b38; }
 }

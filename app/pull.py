@@ -1,21 +1,22 @@
 import json
 from datetime import datetime, timezone
 
-from .weather_api import fetch_weather, geocode_city
+from .weather_api import fetch_weather, geocode_by_id, geocode_city
 
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
-def get_or_create_city(conn, name):
+def get_or_create_city(conn, name, location_id=None):
     row = conn.execute(
         "SELECT * FROM cities WHERE lower(query_name) = lower(?)", (name,)
     ).fetchone()
     if row:
         return row
 
-    info = geocode_city(name)  # may raise CityNotFoundError / UpstreamError
+    # may raise CityNotFoundError / UpstreamError
+    info = geocode_by_id(location_id) if location_id else geocode_city(name)
     conn.execute(
         """
         INSERT INTO cities (query_name, display_name, country, latitude, longitude, timezone, created_at)
@@ -39,13 +40,16 @@ def get_or_create_city(conn, name):
     ).fetchone()
 
 
-def pull_city(conn, name):
+def pull_city(conn, name, location_id=None):
     """Pull one fresh snapshot for `name`, storing it and returning (city_row, pulled_at).
+
+    `location_id` is an Open-Meteo geocoding id from a search suggestion; when given,
+    it picks the exact place instead of geocoding `name` to its top match.
 
     Raises CityNotFoundError if the name can't be geocoded, or UpstreamError if the
     weather API itself fails. Callers decide how to degrade (e.g. serve cached data).
     """
-    city = get_or_create_city(conn, name)
+    city = get_or_create_city(conn, name, location_id)
     weather = fetch_weather(city["latitude"], city["longitude"], city["timezone"])
 
     pulled_at = now_iso()

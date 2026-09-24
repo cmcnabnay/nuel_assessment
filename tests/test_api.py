@@ -127,3 +127,37 @@ def test_series_metrics_skip_rows_missing_a_column(client, monkeypatch):
     assert humidity["change_since_last_pull"] is None  # only one non-null reading
     assert humidity["rolling_average"] == 60.0
     assert body["metrics"]["series"]["temperature"]["change_since_last_pull"]["absolute"] == 1.0
+
+
+def test_search_returns_suggestions(client, monkeypatch):
+    from app import main as main_module
+
+    results = [{"id": 1, "display_name": "Paris", "region": "Texas", "country": "United States",
+                "latitude": 33.66, "longitude": -95.55, "timezone": "America/Chicago"}]
+    monkeypatch.setattr(main_module, "search_cities", lambda q: results)
+
+    resp = client.get("/api/search", params={"q": "Par"})
+    assert resp.status_code == 200
+    assert resp.json() == results
+
+
+def test_search_upstream_failure_returns_502(client, monkeypatch):
+    from app import main as main_module
+    from app.errors import UpstreamError
+
+    def raise_upstream(q):
+        raise UpstreamError("geocoder down")
+
+    monkeypatch.setattr(main_module, "search_cities", raise_upstream)
+    assert client.get("/api/search", params={"q": "Par"}).status_code == 502
+
+
+def test_pull_with_location_id_uses_exact_match(client, monkeypatch):
+    texas = dict(PARIS_GEOCODE, country="United States", latitude=33.66, longitude=-95.55)
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "geocode_by_id", lambda location_id: texas)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(30.0))
+
+    body = client.post("/api/pull", params={"city": "Paris, Texas", "location_id": 4717560}).json()
+    assert body["city"]["country"] == "United States"
+    assert body["city"]["query_name"] == "Paris, Texas"

@@ -198,19 +198,122 @@ async function selectCity(city) {
   }
 }
 
-async function pullCity(city) {
+async function pullCity(city, locationId) {
   try {
-    const payload = await api(`/api/pull?city=${encodeURIComponent(city)}`, { method: "POST" });
+    const idParam = locationId ? `&location_id=${locationId}` : "";
+    const payload = await api(`/api/pull?city=${encodeURIComponent(city)}${idParam}`, { method: "POST" });
     renderLatest(payload);
   } catch (err) {
     showBanner(err.message, "error");
   }
 }
 
+// --- Search-as-you-type suggestions ---
+
+const suggest = { results: [], active: -1, timer: null, seq: 0 };
+
+function suggestionLabel(r) {
+  return [r.display_name, r.region, r.country].filter(Boolean).join(", ");
+}
+
+function hideSuggestions() {
+  suggest.results = [];
+  suggest.active = -1;
+  el("suggestions").classList.add("hidden");
+  el("city-input").setAttribute("aria-expanded", "false");
+}
+
+function renderSuggestions(query) {
+  const list = el("suggestions");
+  list.innerHTML = "";
+  if (suggest.results.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = `No matches for "${query}"`;
+    list.appendChild(li);
+  }
+  suggest.results.forEach((r, i) => {
+    const li = document.createElement("li");
+    li.id = `suggestion-${i}`;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === suggest.active));
+    li.textContent = r.display_name;
+    const region = [r.region, r.country].filter(Boolean).join(", ");
+    if (region) {
+      const span = document.createElement("span");
+      span.className = "region";
+      span.textContent = ` ${region}`;
+      li.appendChild(span);
+    }
+    // mousedown (not click) fires before the input's blur hides the list.
+    li.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      chooseSuggestion(i);
+    });
+    list.appendChild(li);
+  });
+  list.classList.remove("hidden");
+  el("city-input").setAttribute("aria-expanded", "true");
+  el("city-input").setAttribute("aria-activedescendant", suggest.active >= 0 ? `suggestion-${suggest.active}` : "");
+}
+
+async function fetchSuggestions(query) {
+  const seq = ++suggest.seq;
+  try {
+    const results = await api(`/api/search?q=${encodeURIComponent(query)}`);
+    if (seq !== suggest.seq) return; // a newer keystroke already fired
+    suggest.results = results;
+    suggest.active = -1;
+    renderSuggestions(query);
+  } catch {
+    if (seq === suggest.seq) hideSuggestions();
+  }
+}
+
+function chooseSuggestion(i) {
+  const r = suggest.results[i];
+  if (!r) return;
+  hideSuggestions();
+  el("city-input").value = "";
+  pullCity(suggestionLabel(r), r.id);
+}
+
+el("city-input").addEventListener("input", (e) => {
+  const query = e.target.value.trim();
+  clearTimeout(suggest.timer);
+  if (query.length < 2) {
+    suggest.seq++; // drop any in-flight response
+    hideSuggestions();
+    return;
+  }
+  suggest.timer = setTimeout(() => fetchSuggestions(query), 250);
+});
+
+el("city-input").addEventListener("keydown", (e) => {
+  const open = !el("suggestions").classList.contains("hidden") && suggest.results.length > 0;
+  if (!open) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const n = suggest.results.length;
+    suggest.active = (suggest.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    renderSuggestions(el("city-input").value.trim());
+  } else if (e.key === "Enter" && suggest.active >= 0) {
+    e.preventDefault();
+    chooseSuggestion(suggest.active);
+  } else if (e.key === "Escape") {
+    hideSuggestions();
+  }
+});
+
+el("city-input").addEventListener("blur", hideSuggestions);
+
 el("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const city = el("city-input").value.trim();
   if (!city) return;
+  clearTimeout(suggest.timer);
+  suggest.seq++;
+  hideSuggestions();
   pullCity(city);
   el("city-input").value = "";
 });

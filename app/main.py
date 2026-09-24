@@ -13,6 +13,7 @@ from .errors import CityNotFoundError, ItineraryError, UpstreamError
 from .llm import suggest_itinerary
 from .metrics import alert_triggered, change_since_last_pull, min_max, rolling_average
 from .pull import pull_city
+from .weather_api import search_cities
 
 
 @asynccontextmanager
@@ -118,14 +119,23 @@ def list_cities():
         conn.close()
 
 
+@app.get("/api/search")
+def search(q: str = Query(..., min_length=2)):
+    """Search-as-you-type suggestions straight from Open-Meteo geocoding (not stored)."""
+    try:
+        return search_cities(q)
+    except UpstreamError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @app.post("/api/pull")
-def trigger_pull(city: str = Query(..., min_length=1)):
+def trigger_pull(city: str = Query(..., min_length=1), location_id: Optional[int] = None):
     """Trigger a fresh pull for `city` (geocoding + storing it if new). Falls back to
     the last known-good snapshot with status='stale' if the weather API is down."""
     conn = db_module.get_connection()
     try:
         try:
-            city_row, _ = pull_city(conn, city)
+            city_row, _ = pull_city(conn, city, location_id)
         except CityNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except UpstreamError as exc:

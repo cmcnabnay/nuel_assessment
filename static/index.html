@@ -4,14 +4,18 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=3" />
+<link rel="stylesheet" href="/static/style.css?v=4" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <header>
     <h1>Weather Dashboard</h1>
     <form id="search-form">
-      <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required />
+      <div class="search-box">
+        <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required
+          role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions" />
+        <ul id="suggestions" class="suggestions hidden" role="listbox"></ul>
+      </div>
       <button type="submit">Search</button>
     </form>
     <div id="unit-toggle" class="unit-toggle" role="group" aria-label="Temperature unit">
@@ -84,6 +88,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

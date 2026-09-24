@@ -3,31 +3,56 @@ import requests
 from .errors import CityNotFoundError, UpstreamError
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+GEOCODE_BY_ID_URL = "https://geocoding-api.open-meteo.com/v1/get"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT_SECONDS = 8
 
 
-def geocode_city(name):
-    """Resolve a free-text city name to coordinates via Open-Meteo's geocoding API."""
+def _geocode_get(url, params):
     try:
-        resp = requests.get(GEOCODE_URL, params={"name": name, "count": 1}, timeout=TIMEOUT_SECONDS)
+        resp = requests.get(url, params=params, timeout=TIMEOUT_SECONDS)
+    except requests.RequestException as exc:
+        raise UpstreamError(f"Geocoding request failed: {exc}") from exc
+    # Open-Meteo answers an unknown location id with 400 {"reason": "Location ID not found."}.
+    if resp.status_code == 400 and "id" in params:
+        raise CityNotFoundError(f"No location found for id {params['id']}")
+    try:
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise UpstreamError(f"Geocoding request failed: {exc}") from exc
+    return resp.json()
 
-    data = resp.json()
-    results = data.get("results")
-    if not results:
-        raise CityNotFoundError(f"No location found for '{name}'")
 
-    match = results[0]
+def _location(match):
     return {
+        "id": match.get("id"),
         "display_name": match["name"],
+        "region": match.get("admin1"),
         "country": match.get("country"),
         "latitude": match["latitude"],
         "longitude": match["longitude"],
         "timezone": match.get("timezone") or "auto",
     }
+
+
+def search_cities(name, count=5):
+    """Top geocoding matches for a partial city name, for search-as-you-type."""
+    data = _geocode_get(GEOCODE_URL, {"name": name, "count": count})
+    return [_location(m) for m in data.get("results") or []]
+
+
+def geocode_city(name):
+    """Resolve a free-text city name to coordinates via Open-Meteo's geocoding API."""
+    results = search_cities(name, count=1)
+    if not results:
+        raise CityNotFoundError(f"No location found for '{name}'")
+    return results[0]
+
+
+def geocode_by_id(location_id):
+    """Resolve a location picked from search_cities() results, so an ambiguous name
+    (e.g. Paris, Texas) doesn't fall back to the top match."""
+    return _location(_geocode_get(GEOCODE_BY_ID_URL, {"id": location_id}))
 
 
 def fetch_weather(latitude, longitude, tz="auto"):
