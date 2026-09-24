@@ -91,6 +91,7 @@ function renderLatest(payload) {
   state.lastPayload = payload;
   state.currentCity = payload.city.query_name;
   el("dashboard").classList.remove("hidden");
+  el("tabs").classList.remove("hidden");
   el("empty-state").classList.add("hidden");
 
   el("city-name").textContent = payload.city.display_name + (payload.city.country ? `, ${payload.city.country}` : "");
