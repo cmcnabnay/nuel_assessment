@@ -3,16 +3,16 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db as db_module
 from .config import ALERT_THRESHOLD_C, ROLLING_WINDOW
 from .errors import CityNotFoundError, ItineraryError, UpstreamError
-from .llm import suggest_itinerary
+from .llm import normalize_days, suggest_itinerary
 from .metrics import alert_triggered, change_since_last_pull, min_max, rolling_average
-from .pull import pull_city
+from .pull import now_iso, pull_city
 from .weather_api import search_cities
 
 
@@ -257,5 +257,68 @@ def itinerary(city: str = Query(..., min_length=1)):
             "truncated": result.get("truncated", False),
             "text": result.get("text"),
         }
+    finally:
+        conn.close()
+
+
+def _saved_itinerary_dict(row):
+    return {
+        "id": row["id"],
+        "saved_at": row["saved_at"],
+        "days": json.loads(row["days_json"]) if row["days_json"] else None,
+        "text": row["text"],
+    }
+
+
+@app.get("/api/itineraries")
+def list_saved_itineraries(city: str = Query(..., min_length=1)):
+    """Saved itineraries for `city`, newest first."""
+    conn = db_module.get_connection()
+    try:
+        row = _get_city_row(conn, city)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"'{city}' has not been pulled yet.")
+        rows = conn.execute(
+            "SELECT * FROM saved_itineraries WHERE city_id = ? ORDER BY saved_at DESC, id DESC",
+            (row["id"],),
+        ).fetchall()
+        return [_saved_itinerary_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/itineraries", status_code=201)
+def save_itinerary(city: str = Query(..., min_length=1), itinerary: dict = Body(...)):
+    """Save an itinerary the page is showing: {"days": [...]} or {"text": "..."}.
+    Days are re-normalized so only well-formed stops get stored."""
+    days = normalize_days(itinerary.get("days"))
+    text = itinerary.get("text") if isinstance(itinerary.get("text"), str) else ""
+    if not days and not text.strip():
+        raise HTTPException(status_code=422, detail="Nothing to save: the itinerary has no stops or text.")
+
+    conn = db_module.get_connection()
+    try:
+        row = _get_city_row(conn, city)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"'{city}' has not been pulled yet.")
+        cur = conn.execute(
+            "INSERT INTO saved_itineraries (city_id, saved_at, days_json, text) VALUES (?, ?, ?, ?)",
+            (row["id"], now_iso(), json.dumps(days) if days else None, None if days else text.strip()),
+        )
+        conn.commit()
+        saved = conn.execute("SELECT * FROM saved_itineraries WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return _saved_itinerary_dict(saved)
+    finally:
+        conn.close()
+
+
+@app.delete("/api/itineraries/{itinerary_id}", status_code=204)
+def delete_itinerary(itinerary_id: int):
+    conn = db_module.get_connection()
+    try:
+        cur = conn.execute("DELETE FROM saved_itineraries WHERE id = ?", (itinerary_id,))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Saved itinerary not found.")
     finally:
         conn.close()

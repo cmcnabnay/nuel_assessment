@@ -193,3 +193,38 @@ def test_forecast_is_empty_when_no_pull_stored_one(client, monkeypatch):
     client.post("/api/pull", params={"city": "Paris"})
 
     assert client.get("/api/forecast", params={"city": "Paris"}).json() == []
+
+
+def test_save_list_and_delete_itineraries(client, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(20.0))
+    client.post("/api/pull", params={"city": "Paris"})
+
+    days = [{"date": "2026-09-25", "title": "Left Bank", "weather_note": "Mild.",
+             "events": [{"time": "9:00 AM", "title": "Coffee", "place": "Cafe de Flore", "category": "Food",
+                         "details": "Terrace.", "extra": "ignored"},
+                        {"time": "", "title": "", "place": ""}]}]
+    first = client.post("/api/itineraries", params={"city": "Paris"}, json={"days": days})
+    assert first.status_code == 201
+    second = client.post("/api/itineraries", params={"city": "Paris"}, json={"text": "Day 1: walk."})
+    assert second.status_code == 201
+
+    listed = client.get("/api/itineraries", params={"city": "Paris"}).json()
+    assert [s["id"] for s in listed] == [second.json()["id"], first.json()["id"]]  # newest first
+    assert listed[1]["days"][0]["events"] == [
+        {"time": "9:00 AM", "title": "Coffee", "place": "Cafe de Flore", "category": "food", "details": "Terrace."}
+    ]
+    assert listed[0]["text"] == "Day 1: walk." and listed[0]["days"] is None
+
+    assert client.delete(f"/api/itineraries/{first.json()['id']}").status_code == 204
+    assert [s["id"] for s in client.get("/api/itineraries", params={"city": "Paris"}).json()] == [second.json()["id"]]
+    assert client.delete(f"/api/itineraries/{first.json()['id']}").status_code == 404
+
+
+def test_save_rejects_empty_itinerary_and_unknown_city(client, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(20.0))
+    client.post("/api/pull", params={"city": "Paris"})
+
+    assert client.post("/api/itineraries", params={"city": "Paris"}, json={"days": []}).status_code == 422
+    assert client.post("/api/itineraries", params={"city": "Nowhere"}, json={"text": "x"}).status_code == 404

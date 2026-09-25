@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS snapshots (
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_city_time ON snapshots (city_id, pulled_at);
+
+-- Itineraries the user chose to keep. Exactly one of days_json (structured) or text
+-- (the model's prose reply) is set.
+CREATE TABLE IF NOT EXISTS saved_itineraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    city_id INTEGER NOT NULL REFERENCES cities (id),
+    saved_at TEXT NOT NULL,
+    days_json TEXT,
+    text TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_itineraries_city ON saved_itineraries (city_id, saved_at);
 """
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add them to

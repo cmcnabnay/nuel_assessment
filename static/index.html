@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=20" />
+<link rel="stylesheet" href="/static/style.css?v=21" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -101,10 +101,19 @@
         <div id="itinerary-panel" class="card itinerary hidden" role="tabpanel">
           <div class="itinerary-head">
             <div class="card-label">Trip itinerary for <span id="itinerary-city">-</span></div>
-            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
+            <div class="itinerary-actions">
+              <button id="itinerary-save-btn" type="button" class="secondary hidden">Save itinerary</button>
+              <button id="itinerary-btn" type="button">Suggest an itinerary</button>
+            </div>
           </div>
           <div id="itinerary-status" class="muted"></div>
           <div id="itinerary-content" class="itinerary-content"></div>
+
+          <div class="saved-itineraries">
+            <div class="card-label">Saved itineraries</div>
+            <ul id="saved-list"></ul>
+            <div id="saved-empty" class="muted">None saved for this city yet.</div>
+          </div>
         </div>
       </div>
     </section>
@@ -112,6 +121,6 @@
 
   <div id="pull-picker" class="pull-picker hidden" role="dialog" aria-label="Choose a pull"></div>
 
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

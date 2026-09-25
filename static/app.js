@@ -143,6 +143,8 @@ function renderLatest(payload) {
     el("itinerary-city").textContent = payload.city.display_name;
     el("itinerary-content").innerHTML = "";
     el("itinerary-status").textContent = "";
+    showSaveButton(null);
+    loadSavedItineraries(payload.city.query_name);
   }
   updateLocalTime();
 
@@ -808,6 +810,24 @@ function renderMarkdown(text) {
   return out.join("");
 }
 
+// Shows an itinerary ({days} or {text}) in the panel. `note` is an optional line above it.
+function showItinerary(itinerary, note = "") {
+  el("itinerary-content").innerHTML =
+    (note ? `<p class="it-disclaimer">${note}</p>` : "") +
+    (itinerary.days ? renderItineraryDays(itinerary.days) : renderMarkdown(itinerary.text || "")) +
+    `<p class="it-disclaimer">AI-generated suggestions. Check opening hours, event schedules and reservations before you go.</p>`;
+}
+
+// The Save button applies to a freshly generated itinerary; hidden otherwise (e.g. while
+// viewing one that's already saved).
+function showSaveButton(itinerary) {
+  state.unsavedItinerary = itinerary;
+  const btn = el("itinerary-save-btn");
+  btn.classList.toggle("hidden", !itinerary);
+  btn.disabled = false;
+  btn.textContent = "Save itinerary";
+}
+
 el("itinerary-btn").addEventListener("click", async () => {
   if (!state.currentCity) return;
   const city = state.currentCity;
@@ -815,21 +835,126 @@ el("itinerary-btn").addEventListener("click", async () => {
   btn.disabled = true;
   el("itinerary-status").textContent = "Asking the model...";
   el("itinerary-content").innerHTML = "";
+  showSaveButton(null);
+  markViewing(null);
   try {
     const payload = await api(`/api/itinerary?city=${encodeURIComponent(city)}`);
     if (city !== state.currentCity) return; // user switched cities while waiting
     el("itinerary-status").textContent = "";
-    const cutOffNote = payload.truncated
-      ? `<p class="it-disclaimer">The model's reply was cut off, so this shows the stops that came through. Try again for the full plan.</p>`
-      : "";
-    el("itinerary-content").innerHTML =
-      cutOffNote +
-      (payload.days ? renderItineraryDays(payload.days) : renderMarkdown(payload.text || "")) +
-      `<p class="it-disclaimer">AI-generated suggestions. Check opening hours, event schedules and reservations before you go.</p>`;
+    showItinerary(payload, payload.truncated
+      ? "The model's reply was cut off, so this shows the stops that came through. Try again for the full plan."
+      : "");
+    showSaveButton({ days: payload.days, text: payload.text });
   } catch (err) {
     if (city === state.currentCity) el("itinerary-status").textContent = `Itinerary unavailable: ${err.message}`;
   } finally {
     btn.disabled = false;
+  }
+});
+
+// --- Saved itineraries ---
+
+async function loadSavedItineraries(city) {
+  let saved = [];
+  try {
+    saved = await api(`/api/itineraries?city=${encodeURIComponent(city)}`);
+  } catch {
+    // leave the list empty; the rest of the page still works
+  }
+  if (city !== state.currentCity) return;
+  state.savedItineraries = saved;
+  renderSavedList();
+}
+
+function savedSummary(s) {
+  if (!s.days) return "Text itinerary";
+  const titles = s.days.map((d) => d.title).filter(Boolean);
+  const count = `${s.days.length} day${s.days.length === 1 ? "" : "s"}`;
+  return titles.length ? `${count}: ${titles.join(" · ")}` : count;
+}
+
+function renderSavedList() {
+  const list = el("saved-list");
+  list.innerHTML = "";
+  const saved = state.savedItineraries || [];
+  el("saved-empty").classList.toggle("hidden", saved.length > 0);
+  saved.forEach((s) => {
+    const li = document.createElement("li");
+    li.dataset.id = s.id;
+    if (s.id === state.viewingSavedId) li.classList.add("viewing");
+    li.innerHTML = `
+      <div>
+        <div class="saved-when">Saved ${escapeHtml(new Date(s.saved_at).toLocaleString())}</div>
+        <div class="saved-summary">${escapeHtml(savedSummary(s))}</div>
+      </div>
+      <div class="saved-buttons">
+        <button type="button" class="secondary" data-action="view">View</button>
+        <button type="button" class="danger" data-action="delete">Delete</button>
+      </div>`;
+    list.appendChild(li);
+  });
+}
+
+function markViewing(id) {
+  state.viewingSavedId = id;
+  document.querySelectorAll("#saved-list li").forEach((li) => li.classList.toggle("viewing", Number(li.dataset.id) === id));
+}
+
+el("itinerary-save-btn").addEventListener("click", async () => {
+  const itinerary = state.unsavedItinerary;
+  if (!itinerary || !state.currentCity) return;
+  const city = state.currentCity;
+  const btn = el("itinerary-save-btn");
+  btn.disabled = true;
+  btn.textContent = "Saving...";
+  try {
+    const saved = await api(`/api/itineraries?city=${encodeURIComponent(city)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(itinerary),
+    });
+    if (city !== state.currentCity) return;
+    state.unsavedItinerary = null;
+    btn.textContent = "Saved ✓";
+    state.savedItineraries = [saved, ...(state.savedItineraries || [])];
+    state.viewingSavedId = saved.id;
+    renderSavedList();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Save itinerary";
+    el("itinerary-status").textContent = `Couldn't save: ${err.message}`;
+  }
+});
+
+el("saved-list").addEventListener("click", async (e) => {
+  const button = e.target.closest("button[data-action]");
+  if (!button) return;
+  const id = Number(button.closest("li").dataset.id);
+  const saved = (state.savedItineraries || []).find((s) => s.id === id);
+  if (!saved) return;
+
+  if (button.dataset.action === "view") {
+    el("itinerary-status").textContent = "";
+    showItinerary(saved, `Saved ${escapeHtml(new Date(saved.saved_at).toLocaleString())}`);
+    showSaveButton(null);
+    markViewing(id);
+    return;
+  }
+
+  if (!confirm("Delete this saved itinerary? This can't be undone.")) return;
+  button.disabled = true;
+  try {
+    await api(`/api/itineraries/${id}`, { method: "DELETE" });
+    state.savedItineraries = state.savedItineraries.filter((s) => s.id !== id);
+    if (state.viewingSavedId === id) {
+      state.viewingSavedId = null;
+      // Only clear the panel if it was showing the deleted one (not a fresh, unsaved plan).
+      if (!state.unsavedItinerary) el("itinerary-content").innerHTML = "";
+    }
+    renderSavedList();
+  } catch (err) {
+    button.disabled = false;
+    el("itinerary-status").textContent = `Couldn't delete: ${err.message}`;
   }
 });
 

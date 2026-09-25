@@ -146,8 +146,14 @@ def parse_itinerary(content):
     data, truncated = _load_itinerary_json(content)
     if data is None:
         return None, False
+    days = normalize_days(data.get("days") if isinstance(data, dict) else None)
+    return (days, truncated) if days else (None, False)
 
-    raw_days = data.get("days") if isinstance(data, dict) else None
+
+def normalize_days(raw_days):
+    """Coerce an itinerary's days into the expected shape, dropping anything malformed
+    (non-dict entries, stops with neither title nor place, days with no stops). Used for
+    model replies and for itineraries the page asks to save. Returns a list (maybe empty)."""
     days = []
     for day in raw_days if isinstance(raw_days, list) else []:
         if not isinstance(day, dict):
@@ -170,7 +176,7 @@ def parse_itinerary(content):
                 "weather_note": str(day.get("weather_note") or "").strip(),
                 "events": events,
             })
-    return (days, truncated) if days else (None, False)
+    return days
 
 
 def suggest_itinerary(city_display_name, current, daily, tz_name=None):
