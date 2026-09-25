@@ -39,7 +39,7 @@ def test_suggest_itinerary_raises_on_null_content(monkeypatch):
         llm_module.suggest_itinerary("Paris", CURRENT, None)
 
 
-def test_suggest_itinerary_returns_stripped_content(monkeypatch):
+def test_suggest_itinerary_falls_back_to_text_when_reply_is_not_json(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(
         llm_module.requests,
@@ -47,7 +47,43 @@ def test_suggest_itinerary_returns_stripped_content(monkeypatch):
         lambda *a, **k: FakeResponse({"choices": [{"message": {"content": "  Day 1: walk.  "}}]}),
     )
     result = llm_module.suggest_itinerary("Paris", CURRENT, None)
-    assert result == "Day 1: walk."
+    assert result == {"text": "Day 1: walk."}
+
+
+def test_suggest_itinerary_parses_fenced_json(monkeypatch):
+    reply = """Here you go:
+```json
+{"days": [{"date": "2026-09-25", "title": "Art and a ballgame", "weather_note": "Sunny.",
+  "events": [
+    {"time": "10:00 AM", "title": "Impressionist wing", "place": "Musee d'Orsay, 7th arr.",
+     "category": "Museum", "details": "Go early."},
+    {"time": "", "title": "", "place": "", "category": "", "details": "dropped: no title or place"}
+  ]}]}
+```"""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        llm_module.requests, "post", lambda *a, **k: FakeResponse({"choices": [{"message": {"content": reply}}]})
+    )
+    result = llm_module.suggest_itinerary("Paris", CURRENT, None)
+    (day,) = result["days"]
+    assert day["title"] == "Art and a ballgame"
+    assert day["events"] == [{"time": "10:00 AM", "title": "Impressionist wing", "place": "Musee d'Orsay, 7th arr.",
+                              "category": "museum", "details": "Go early."}]
+
+
+def test_parse_itinerary_rejects_json_without_events():
+    assert llm_module.parse_itinerary('{"days": [{"date": "2026-09-25", "events": []}]}') is None
+    assert llm_module.parse_itinerary("{not json}") is None
+
+
+def test_build_prompt_describes_weather_in_words_and_both_units():
+    daily = {"time": ["2026-09-25"], "temperature_2m_max": [30.0], "temperature_2m_min": [20.0],
+             "precipitation_sum": [4.2], "weathercode": [63]}
+    prompt = llm_module.build_prompt("Houston", CURRENT, daily, "America/Chicago")
+    assert "Friday 2026-09-25" in prompt
+    assert "high 30.0°C / 86.0°F" in prompt
+    assert "rain" in prompt and "code 63" not in prompt
+    assert "Current local time:" in prompt
 
 
 def test_suggest_itinerary_wraps_network_errors(monkeypatch):

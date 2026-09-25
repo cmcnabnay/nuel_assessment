@@ -1,39 +1,131 @@
+import json
 import os
+from datetime import date, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
 from .errors import ItineraryError
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-TIMEOUT_SECONDS = 25
-DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
+# A full multi-day itinerary is a long answer; free-tier models can be slow to finish it.
+TIMEOUT_SECONDS = 60
+DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+
+# WMO weather codes -> plain words, so the model reasons about "rain" rather than "63".
+WEATHER_CODES = {
+    0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
+    45: "fog", 48: "freezing fog",
+    51: "light drizzle", 53: "drizzle", 55: "heavy drizzle",
+    61: "light rain", 63: "rain", 65: "heavy rain",
+    71: "light snow", 73: "snow", 75: "heavy snow",
+    80: "light showers", 81: "showers", 82: "violent showers",
+    95: "thunderstorms", 96: "thunderstorms with hail", 99: "thunderstorms with heavy hail",
+}
+
+CATEGORIES = ("food", "museum", "park", "event", "sightseeing", "activity", "shopping", "nightlife")
+
+SYSTEM_PROMPT = f"""You are an expert local travel planner. Plan a detailed itinerary for a visitor.
+
+Rules:
+- Name specific, real places: the actual museum, the actual restaurant, the actual park or
+  venue, with its neighborhood. Never write generic entries like "a local cafe".
+- Each day runs from morning to evening with 5 to 7 timed stops, including breakfast or
+  coffee, lunch and dinner at named restaurants.
+- Fit the plan to that day's weather: indoor stops for rain, storms or extreme heat or cold,
+  outdoor stops for good weather.
+- Only include a sports game, concert or other scheduled event if the venue really hosts
+  them; say "check the schedule" in its details.
+- Day 1 is today. Start it after the current local time given below.
+- No summary, no key takeaways, no closing remarks, no markdown.
+
+Reply with only a JSON object, no other text, in exactly this shape:
+{{"days": [{{"date": "YYYY-MM-DD", "title": "short theme for the day",
+  "weather_note": "one sentence on how the weather shapes the day",
+  "events": [{{"time": "9:00 AM", "title": "what you do", "place": "specific place name, neighborhood",
+    "category": "one of: {", ".join(CATEGORIES)}", "details": "one or two sentences"}}]}}]}}"""
 
 
-def build_prompt(city_display_name, current, daily):
-    lines = [
-        f"City: {city_display_name}",
-        f"Current: {current['temperature']}°C, windspeed {current['windspeed']} km/h, "
-        f"weather code {current['weathercode']} (WMO code).",
-    ]
-    if daily and daily.get("time"):
-        lines.append("Upcoming daily forecast:")
-        for i, date in enumerate(daily["time"]):
-            tmax = daily["temperature_2m_max"][i]
-            tmin = daily["temperature_2m_min"][i]
-            precip = daily["precipitation_sum"][i]
-            code = daily["weathercode"][i]
-            lines.append(
-                f"- {date}: max {tmax}°C / min {tmin}°C, "
-                f"precipitation {precip}mm, weather code {code}"
-            )
+def _describe(code):
+    return WEATHER_CODES.get(code, f"weather code {code}")
+
+
+def _c_and_f(c):
+    return f"{c}°C / {round(c * 9 / 5 + 32, 1)}°F"
+
+
+def _local_now(tz_name):
+    try:
+        return datetime.now(ZoneInfo(tz_name)) if tz_name and tz_name != "auto" else None
+    except ZoneInfoNotFoundError:
+        return None
+
+
+def build_prompt(city_display_name, current, daily, tz_name=None):
+    lines = [f"City: {city_display_name}"]
+    now = _local_now(tz_name)
+    if now:
+        lines.append(f"Current local time: {now.strftime('%A %Y-%m-%d, %I:%M %p')} ({tz_name})")
     lines.append(
-        "Suggest a short, practical day-by-day itinerary for a visitor, "
-        "explaining briefly how the forecast shapes each day's plan."
+        f"Current weather: {_c_and_f(current['temperature'])}, {_describe(current['weathercode'])}, "
+        f"wind {current['windspeed']} km/h."
     )
+    if daily and daily.get("time"):
+        lines.append("Daily forecast:")
+        for i, day in enumerate(daily["time"]):
+            weekday = date.fromisoformat(day).strftime("%A")
+            lines.append(
+                f"- {weekday} {day}: high {_c_and_f(daily['temperature_2m_max'][i])}, "
+                f"low {_c_and_f(daily['temperature_2m_min'][i])}, "
+                f"precipitation {daily['precipitation_sum'][i]} mm, {_describe(daily['weathercode'][i])}"
+            )
+    lines.append("Plan one day per forecast day.")
     return "\n".join(lines)
 
 
-def suggest_itinerary(city_display_name, current, daily):
+def parse_itinerary(content):
+    """Pull the {"days": [...]} object out of the model's reply and normalize it.
+
+    Small models often wrap JSON in ```fences``` or add a sentence around it, so this
+    takes the outermost {...}. Returns None if there's no usable itinerary in it.
+    """
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(content[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    raw_days = data.get("days") if isinstance(data, dict) else None
+    days = []
+    for day in raw_days if isinstance(raw_days, list) else []:
+        if not isinstance(day, dict):
+            continue
+        events = [
+            {
+                "time": str(e.get("time") or "").strip(),
+                "title": str(e.get("title") or "").strip(),
+                "place": str(e.get("place") or "").strip(),
+                "category": str(e.get("category") or "").strip().lower(),
+                "details": str(e.get("details") or "").strip(),
+            }
+            for e in day.get("events") or []
+            if isinstance(e, dict) and (e.get("title") or e.get("place"))
+        ]
+        if events:
+            days.append({
+                "date": str(day.get("date") or "").strip(),
+                "title": str(day.get("title") or "").strip(),
+                "weather_note": str(day.get("weather_note") or "").strip(),
+                "events": events,
+            })
+    return days or None
+
+
+def suggest_itinerary(city_display_name, current, daily, tz_name=None):
+    """Ask the model for an itinerary. Returns {"days": [...]} when it replied with
+    usable JSON, else {"text": "..."} with its raw reply so the page can still show it."""
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ItineraryError("OPENROUTER_API_KEY is not configured on the server")
@@ -42,18 +134,13 @@ def suggest_itinerary(city_display_name, current, daily):
     body = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a concise local travel assistant. Base your suggestions only "
-                    "on the weather data given. Keep the whole answer under 200 words."
-                ),
-            },
-            {"role": "user", "content": build_prompt(city_display_name, current, daily)},
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": build_prompt(city_display_name, current, daily, tz_name)},
         ],
-        # Generous headroom: some free-tier models are "reasoning" models that spend
-        # a chunk of the budget on hidden chain-of-thought before the final answer.
-        "max_tokens": 1600,
+        # Generous headroom: a 3-day, 5-7 stop itinerary is long, and some free-tier
+        # models are "reasoning" models that spend part of the budget on hidden
+        # chain-of-thought before the final answer.
+        "max_tokens": 4000,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -77,4 +164,5 @@ def suggest_itinerary(city_display_name, current, daily):
         # chain-of-thought and return no visible answer at all.
         raise ItineraryError("Model returned no content -- try again or pick a different model")
 
-    return content.strip()
+    days = parse_itinerary(content)
+    return {"days": days} if days else {"text": content.strip()}

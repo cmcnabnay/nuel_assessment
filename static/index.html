@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=16" />
+<link rel="stylesheet" href="/static/style.css?v=17" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -31,11 +31,12 @@
     </section>
 
     <section class="content">
-      <div id="tabs" class="tabs hidden" role="tablist" aria-label="Weather metric">
-        <button type="button" role="tab" data-series="temperature">Temperature</button>
-        <button type="button" role="tab" data-series="precipitation">Precipitation</button>
-        <button type="button" role="tab" data-series="windspeed">Wind speed</button>
-        <button type="button" role="tab" data-series="humidity">Humidity</button>
+      <div id="tabs" class="tabs hidden" role="tablist" aria-label="Dashboard view">
+        <button type="button" role="tab" data-tab="temperature">Temperature</button>
+        <button type="button" role="tab" data-tab="precipitation">Precipitation</button>
+        <button type="button" role="tab" data-tab="windspeed">Wind speed</button>
+        <button type="button" role="tab" data-tab="humidity">Humidity</button>
+        <button type="button" role="tab" data-tab="itinerary">Itinerary</button>
       </div>
 
       <div id="banner" class="banner hidden"></div>
@@ -45,23 +46,19 @@
       </div>
 
       <div id="dashboard" class="hidden">
-        <div class="cards">
-          <div class="card current">
-            <div class="card-label">Current conditions in <span id="city-name">-</span></div>
-            <div id="weather-desc" class="weather-desc">-</div>
-            <div class="meta">Pulled <span id="pulled-at">-</span> &middot; <span id="metric-count">-</span> pulls stored</div>
-            <button id="refresh-btn" type="button">Refresh (pull now)</button>
-          </div>
-
-          <div class="card itinerary">
-            <div class="card-label">Trip itinerary suggestion (LLM)</div>
-            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
-            <div id="itinerary-status" class="muted"></div>
-            <p id="itinerary-text"></p>
-          </div>
+        <div class="status-bar">
+          <span class="meta">Pulled <span id="pulled-at">-</span> &middot; <span id="metric-count">-</span> pulls stored</span>
+          <button id="refresh-btn" type="button">Refresh (pull now)</button>
         </div>
 
-        <div class="cards" role="tabpanel">
+        <div class="card current conditions">
+          <div class="card-label">Current conditions in <span id="city-name">-</span></div>
+          <div id="weather-desc" class="weather-desc">-</div>
+          <div class="local-time">Local time <span id="local-time">-</span></div>
+        </div>
+
+        <div id="metric-panel" role="tabpanel">
+        <div class="cards">
           <div class="card">
             <div class="card-label">Current <span id="series-name">-</span></div>
             <div class="current-value" id="series-current">-</div>
@@ -95,12 +92,22 @@
           <canvas id="forecast-chart" height="90"></canvas>
           <div id="forecast-empty" class="muted hidden">No forecast stored yet. Refresh (pull now) to fetch one.</div>
         </div>
+        </div>
+
+        <div id="itinerary-panel" class="card itinerary hidden" role="tabpanel">
+          <div class="itinerary-head">
+            <div class="card-label">Trip itinerary for <span id="itinerary-city">-</span></div>
+            <button id="itinerary-btn" type="button">Suggest an itinerary</button>
+          </div>
+          <div id="itinerary-status" class="muted"></div>
+          <div id="itinerary-content" class="itinerary-content"></div>
+        </div>
       </div>
     </section>
   </main>
 
   <div id="pull-picker" class="pull-picker hidden" role="dialog" aria-label="Choose a pull"></div>
 
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 </html>

@@ -246,10 +246,11 @@ def itinerary(city: str = Query(..., min_length=1)):
             "weathercode": snap["weathercode"],
         }
         try:
-            text = suggest_itinerary(row["display_name"], current, daily)
+            result = suggest_itinerary(row["display_name"], current, daily, row["timezone"])
         except ItineraryError as exc:
             return JSONResponse({"error": str(exc)}, status_code=503)
 
-        return {"city": row["display_name"], "itinerary": text}
+        # Either "days" (structured itinerary) or "text" (model's raw reply) is set.
+        return {"city": row["display_name"], "days": result.get("days"), "text": result.get("text")}
     finally:
         conn.close()

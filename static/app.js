@@ -18,6 +18,8 @@ const state = {
   forecast: [],
   unit: loadPref("unit", ["C", "F"]),
   series: loadPref("series", ["temperature", "precipitation", "windspeed", "humidity"]),
+  // Selected tab: one of the series above, or "itinerary".
+  tab: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -133,9 +135,11 @@ function renderLatest(payload) {
   }
 
   if (!isRerender) {
-    el("itinerary-text").textContent = "";
+    el("itinerary-city").textContent = payload.city.display_name;
+    el("itinerary-content").innerHTML = "";
     el("itinerary-status").textContent = "";
   }
+  updateLocalTime();
 
   if (!isRerender) {
     loadHistory(payload.city.query_name);
@@ -698,37 +702,123 @@ document.querySelectorAll(".unit-toggle button").forEach((b) => {
 });
 setUnit(state.unit);
 
-function setSeries(series) {
-  state.series = series;
-  savePref("series", series);
+function setTab(tab) {
+  const isItinerary = tab === "itinerary";
+  state.tab = tab;
+  savePref("tab", tab);
+  if (!isItinerary) {
+    state.series = tab;
+    savePref("series", tab);
+  }
   document.querySelectorAll(".tabs button").forEach((b) => {
-    b.setAttribute("aria-selected", String(b.dataset.series === series));
+    b.setAttribute("aria-selected", String(b.dataset.tab === tab));
   });
-  el("unit-toggle").classList.toggle("hidden", series !== "temperature");
-  if (state.lastPayload) renderLatest(state.lastPayload);
+  el("metric-panel").classList.toggle("hidden", isItinerary);
+  el("itinerary-panel").classList.toggle("hidden", !isItinerary);
+  el("unit-toggle").classList.toggle("hidden", tab !== "temperature");
+  closePicker();
+  // Charts drawn while their panel was hidden have no size; redraw on the way back.
+  if (!isItinerary && state.lastPayload) renderLatest(state.lastPayload);
 }
 
 document.querySelectorAll(".tabs button").forEach((b) => {
-  b.addEventListener("click", () => setSeries(b.dataset.series));
+  b.addEventListener("click", () => setTab(b.dataset.tab));
 });
-setSeries(state.series);
+setTab(loadPref("tab", ["temperature", "precipitation", "windspeed", "humidity", "itinerary"]) === "itinerary"
+  ? "itinerary"
+  : state.series);
+
+// --- Itinerary tab ---
+
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+function renderItineraryDays(days) {
+  return days
+    .map((day) => {
+      let dateLabel = "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day.date)) {
+        const [y, m, d] = day.date.split("-").map(Number);
+        dateLabel = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+          weekday: "long", month: "short", day: "numeric", timeZone: "UTC",
+        });
+      }
+      const events = day.events
+        .map((e) => `
+          <li>
+            <span class="it-time">${escapeHtml(e.time)}</span>
+            <div>
+              <div class="it-title">${escapeHtml(e.title || e.place)}${
+                e.category ? `<span class="it-tag">${escapeHtml(e.category)}</span>` : ""}</div>
+              ${e.place && e.title ? `<div class="it-place">${escapeHtml(e.place)}</div>` : ""}
+              ${e.details ? `<div class="it-details">${escapeHtml(e.details)}</div>` : ""}
+            </div>
+          </li>`)
+        .join("");
+      return `
+        <section class="it-day">
+          <h3>${dateLabel ? `<span class="it-date">${escapeHtml(dateLabel)}</span>` : ""}${escapeHtml(day.title)}</h3>
+          ${day.weather_note ? `<p class="it-weather">${escapeHtml(day.weather_note)}</p>` : ""}
+          <ol>${events}</ol>
+        </section>`;
+    })
+    .join("");
+}
+
+// Fallback for a reply that wasn't structured JSON: render the common markdown bits
+// (headings, bullet lists, bold/italic) instead of showing raw ** and # characters.
+function renderMarkdown(text) {
+  const inline = (s) =>
+    escapeHtml(s)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|\W)\*(?!\s)(.+?)\*(?=\W|$)/g, "$1<em>$2</em>");
+  const out = [];
+  let list = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (!bullet && list) { out.push("</ul>"); list = false; }
+    if (!line) continue;
+    const heading = line.match(/^(#{1,6})\s+(.*)/);
+    if (heading) out.push(`<h${heading[1].length <= 2 ? 3 : 4}>${inline(heading[2])}</h${heading[1].length <= 2 ? 3 : 4}>`);
+    else if (bullet) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(bullet[1])}</li>`); }
+    else out.push(`<p>${inline(line)}</p>`);
+  }
+  if (list) out.push("</ul>");
+  return out.join("");
+}
 
 el("itinerary-btn").addEventListener("click", async () => {
   if (!state.currentCity) return;
+  const city = state.currentCity;
   const btn = el("itinerary-btn");
   btn.disabled = true;
-  el("itinerary-status").textContent = "Asking the model...";
-  el("itinerary-text").textContent = "";
+  el("itinerary-status").textContent = "Asking the model... a full itinerary can take up to a minute.";
+  el("itinerary-content").innerHTML = "";
   try {
-    const payload = await api(`/api/itinerary?city=${encodeURIComponent(state.currentCity)}`);
+    const payload = await api(`/api/itinerary?city=${encodeURIComponent(city)}`);
+    if (city !== state.currentCity) return; // user switched cities while waiting
     el("itinerary-status").textContent = "";
-    el("itinerary-text").textContent = payload.itinerary;
+    el("itinerary-content").innerHTML =
+      (payload.days ? renderItineraryDays(payload.days) : renderMarkdown(payload.text || "")) +
+      `<p class="it-disclaimer">AI-generated suggestions. Check opening hours, event schedules and reservations before you go.</p>`;
   } catch (err) {
-    el("itinerary-status").textContent = `Itinerary unavailable: ${err.message}`;
+    if (city === state.currentCity) el("itinerary-status").textContent = `Itinerary unavailable: ${err.message}`;
   } finally {
     btn.disabled = false;
   }
 });
+
+// --- City's current local time (conditions card) ---
+
+function updateLocalTime() {
+  if (!state.lastPayload) return;
+  el("local-time").textContent = formatCityTime(new Date().toISOString(), {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+  });
+}
+setInterval(updateLocalTime, 1000);
 
 // On load, show any previously tracked cities so a refresh doesn't lose context.
 refreshCityList(null).then(async () => {

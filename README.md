@@ -157,3 +157,38 @@ llm.py
   - Saves request.Response object body as a JSON
   - Takes the model's reply text out of the response JSON
   - Raises an error if the model returns a response object but no content
+
+weather_api.py
+- Imports CityNotFoundError and UpstreamError from errors.py
+- Defines the addresses of the two OpenMeteo APIs the app calls
+- geocode_city(): Turns a city name into coordinates and location details using OpenMeteo's geocoding API
+  - Calls Geocoding API, saves response to resp
+  - Saves response object as a JSON to data
+  - Saves results (list of dicts) from data dict
+  - Returns name, country, latitude, longitude, and time zone from first dict in results
+- fetch_weather(): Gets current conditions and a 3 day forecast for a coordinate in a call to OpenMeteo's forecast API
+  - Constructs params dict, holds the query string arguments, part of the URL that tells OpenMeteo what to return
+  - Calls API, saves response object to resp
+  - Raises error if the forecast request fails
+  - Saves resp as JSON to data
+  - Saves current_weather dict to variable current
+  - Raises error if the current_weather dict was not returned by the API call
+  - Returns temperature, windspeed and weathercode from current dict
+  - Returns daily dict from data  
+
+pull.py
+- Imports fetch_weather and geocode_city functions from weather_api.py
+- now_iso(): Returns current UTC time as an ISO-8601 string
+- get_or_create_city(): Returns the cities row for a name
+  - Sends a SQL through the database connection (conn) that returns every column from the cities table where query_name matches the name the user typed
+  - Calls geocode_city function from weather_api.py, saving a dict to info 
+  - Adds a new city to the cities table, filling in display_name, country, latitide, longitude, and timezone from the info dict
+  - conn.commit() makes the insert permanent
+  - Queries the cities table for the row whose latitude and longitude match the geocoded values in info 
+- pull_city(): Finds the city, geocoding it and saving it first if it's new, fetches that city's current weather and 3-day forecast from OpenMeteo, saves them as a new row in the snapshots table, returns the city's row with the pull time
+  - Calls get_or_create_city() function, saving one row from the cities table as a sqlite3.Row
+  - Calls fetch_weather function from weather_api.py, saving a dict with four keys, temperature, windspeed, weathercode, and daily json
+  - Calls now_iso to create variable pulled_at
+  - Inserts a new row into the snapshots table that records the weather for the city at the moment of the pull
+  - conn.commit() makes the snapshot insert permanent
+  - Returns city, a sqlite3.Row holding one row of the cities table and pulled_at, the time that pull_city() was called
