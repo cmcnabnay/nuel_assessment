@@ -107,7 +107,7 @@ def fetch_weather(latitude, longitude, tz="auto"):
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code",
+        "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code,is_day",
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
         "hourly": HOURLY_VARIABLES,
         "forecast_days": 3,
@@ -130,6 +130,7 @@ def fetch_weather(latitude, longitude, tz="auto"):
         "humidity": current.get("relative_humidity_2m"),
         "precipitation": current.get("precipitation"),
         "weathercode": current.get("weather_code"),
+        "is_day": current.get("is_day"),
         "daily": data.get("daily"),
         # Hourly times come back in the city's timezone; _hourly_rows converts to UTC.
         "hourly": _hourly_rows(data["hourly"], data.get("utc_offset_seconds", 0)) if data.get("hourly") else None,

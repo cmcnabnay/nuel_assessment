@@ -91,6 +91,7 @@ def _build_latest_payload(conn, city_row, status="ok", error=None):
             "pulled_at": latest_snap["pulled_at"],
             **{name: latest_snap[name] for name in SERIES},
             "weathercode": latest_snap["weathercode"],
+            "is_day": latest_snap["is_day"],
         },
         "metrics": {
             "pull_count": len(snapshots),
@@ -213,7 +214,7 @@ def forecast(city: str = Query(..., min_length=1)):
         # Keep the hour containing the pull so the forecast joins up with the history.
         pull_hour = snap["pulled_at"][:13]
         return [
-            {"time": h["time"], **{name: h[name] for name in SERIES}}
+            {"time": h["time"], **{name: h[name] for name in SERIES}, "weathercode": h.get("weathercode")}
             for h in json.loads(snap["forecast_hourly_json"])
             if h["time"][:13] >= pull_hour
         ]

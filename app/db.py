@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     weathercode INTEGER,
     forecast_json TEXT,
     forecast_hourly_json TEXT,
+    is_day INTEGER,
     source TEXT NOT NULL DEFAULT 'live'
 );
 
@@ -53,6 +54,8 @@ ADDED_SNAPSHOT_COLUMNS = {
     "source": "TEXT NOT NULL DEFAULT 'live'",
     # Next ~3 days of hourly readings fetched with a live pull, for the forecast chart.
     "forecast_hourly_json": "TEXT",
+    # 1 if the sun was up at pull time (Open-Meteo), for the page's day/night sky.
+    "is_day": "INTEGER",
 }
 
 

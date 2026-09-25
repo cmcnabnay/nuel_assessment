@@ -57,8 +57,8 @@ def pull_city(conn, name, location_id=None):
         """
         INSERT INTO snapshots
             (city_id, pulled_at, temperature, windspeed, humidity, precipitation, weathercode,
-             forecast_json, forecast_hourly_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             is_day, forecast_json, forecast_hourly_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             city["id"],
@@ -68,6 +68,7 @@ def pull_city(conn, name, location_id=None):
             weather.get("humidity"),
             weather.get("precipitation"),
             weather["weathercode"],
+            weather.get("is_day"),
             json.dumps(weather["daily"]) if weather["daily"] else None,
             json.dumps(weather["hourly"]) if weather.get("hourly") else None,
         ),
