@@ -155,6 +155,17 @@ dl { margin: 0; }
 dt { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
 dt:first-child { margin-top: 0; }
 dd { margin: 0; font-size: 0.95rem; }
+dt label { margin-right: 0.35rem; }
+.base-select {
+  max-width: 100%;
+  margin-top: 0.15rem;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
 
 .itinerary #itinerary-text { font-size: 0.9rem; white-space: pre-wrap; margin-top: 0.5rem; }
 .muted { color: var(--muted); font-size: 0.85rem; margin-top: 0.4rem; }

@@ -13,6 +13,8 @@ const state = {
   charts: {},
   lastPayload: null,
   history: [],
+  // pulled_at of the pull each derived metric is measured from (see renderSeries).
+  bases: { change: null, avg: null, minmax: null },
   forecast: [],
   unit: loadPref("unit", ["C", "F"]),
   series: loadPref("series", ["temperature", "precipitation", "windspeed", "humidity"]),
@@ -154,10 +156,16 @@ function renderSeries() {
 
   el("series-name").textContent = cfg.label.toLowerCase();
   el("series-current").textContent = fmt(cfg, payload.snapshot[state.series]);
-  el("metric-change").innerHTML = formatChange(cfg, s.change_since_last_pull);
-  el("metric-avg-label").textContent = `Rolling average (last ${m.rolling_window} pulls)`;
-  el("metric-avg").textContent = fmt(cfg, s.rolling_average);
-  el("metric-minmax").textContent = s.min_max ? `${fmt(cfg, s.min_max.min)} / ${fmt(cfg, s.min_max.max)}` : "n/a";
+
+  const h = state.history;
+  if (h.length === 0 || h[h.length - 1].pulled_at !== payload.snapshot.pulled_at) {
+    // History for this pull hasn't loaded yet; fall back to the server's defaults.
+    el("metric-change").innerHTML = formatChange(cfg, s.change_since_last_pull);
+    el("metric-avg").textContent = fmt(cfg, s.rolling_average);
+    el("metric-minmax").textContent = s.min_max ? `${fmt(cfg, s.min_max.min)} / ${fmt(cfg, s.min_max.max)}` : "n/a";
+  } else {
+    renderSelectedMetrics(cfg);
+  }
 
   if (state.series === "temperature" && m.alert.triggered) {
     el("metric-change").innerHTML += ` <span class="alert-flag">⚠ moved ≥ ${cfg.delta(m.alert.threshold_c)}${cfg.unit()}</span>`;
@@ -166,8 +174,84 @@ function renderSeries() {
 
 async function loadHistory(city) {
   state.history = await api(`/api/history?city=${encodeURIComponent(city)}`);
+  populateBaseSelects();
+  renderSeries();
   renderHistoryChart();
 }
+
+// --- User-selected baselines for the derived metrics ---
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Fills the three "since" dropdowns with every pull except the latest, newest first.
+// Keeps the user's choice if that pull still exists, else picks the default:
+// previous pull (change), the server's ROLLING_WINDOW pulls back (average), oldest (min/max).
+function populateBaseSelects() {
+  const h = state.history;
+  const n = h.length;
+  const defaults = {
+    change: h[n - 2]?.pulled_at,
+    avg: h[Math.max(0, n - (state.lastPayload?.metrics.rolling_window ?? 5))]?.pulled_at,
+    minmax: h[0]?.pulled_at,
+  };
+  const known = new Set(h.map((r) => r.pulled_at));
+
+  document.querySelectorAll(".base-select").forEach((select) => {
+    const metric = select.dataset.metric;
+    if (!known.has(state.bases[metric]) || state.bases[metric] === h[n - 1]?.pulled_at) {
+      state.bases[metric] = defaults[metric] ?? null;
+    }
+    select.innerHTML = "";
+    for (let i = n - 2; i >= 0; i--) {
+      const opt = document.createElement("option");
+      opt.value = h[i].pulled_at;
+      opt.textContent = formatCityTime(h[i].pulled_at);
+      select.appendChild(opt);
+    }
+    select.disabled = n < 2;
+    if (state.bases[metric]) select.value = state.bases[metric];
+  });
+}
+
+// Values of the current series from the pull at `since` through the latest, in °C
+// (unit conversion happens at display time), skipping readings that are missing.
+function seriesValuesSince(since) {
+  const start = state.history.findIndex((r) => r.pulled_at === since);
+  if (start < 0) return [];
+  return state.history.slice(start).map((r) => r[state.series]).filter((v) => v !== null && v !== undefined);
+}
+
+function renderSelectedMetrics(cfg) {
+  const latest = seriesValuesSince(state.history[state.history.length - 1].pulled_at)[0];
+
+  // Change: latest vs the selected pull. Percent is null against a 0 baseline, same as
+  // the server (it's meaningless there, e.g. going from 0°C to -2°C).
+  const base = state.history.find((r) => r.pulled_at === state.bases.change)?.[state.series];
+  let change = null;
+  if (base !== null && base !== undefined && latest !== undefined) {
+    change = {
+      absolute: round2(latest - base),
+      percent: base === 0 ? null : round2(((latest - base) / Math.abs(base)) * 100),
+    };
+  }
+  el("metric-change").innerHTML = formatChange(cfg, change);
+
+  const avgValues = seriesValuesSince(state.bases.avg);
+  const avg = avgValues.length ? round2(avgValues.reduce((a, b) => a + b, 0) / avgValues.length) : null;
+  el("metric-avg").textContent = avg === null ? "n/a" : `${fmt(cfg, avg)} (${avgValues.length} pulls)`;
+
+  const mmValues = seriesValuesSince(state.bases.minmax);
+  el("metric-minmax").textContent = mmValues.length
+    ? `${fmt(cfg, round2(Math.min(...mmValues)))} / ${fmt(cfg, round2(Math.max(...mmValues)))}`
+    : "n/a";
+}
+
+document.querySelectorAll(".base-select").forEach((select) => {
+  select.addEventListener("change", () => {
+    state.bases[select.dataset.metric] = select.value;
+    renderSeries();
+  });
+});
 
 async function loadForecast(city) {
   try {

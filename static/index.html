@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=13" />
+<link rel="stylesheet" href="/static/style.css?v=14" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -70,11 +70,14 @@
           <div class="card metrics">
             <div class="card-label">Derived metrics</div>
             <dl>
-              <dt>Change since last pull</dt>
+              <dt><label for="change-base">Change since</label>
+                <select id="change-base" class="base-select" data-metric="change"></select></dt>
               <dd id="metric-change">-</dd>
-              <dt id="metric-avg-label">Rolling average</dt>
+              <dt><label for="avg-base">Average since</label>
+                <select id="avg-base" class="base-select" data-metric="avg"></select></dt>
               <dd id="metric-avg">-</dd>
-              <dt>Min / Max (all history)</dt>
+              <dt><label for="minmax-base">Min / Max since</label>
+                <select id="minmax-base" class="base-select" data-metric="minmax"></select></dt>
               <dd id="metric-minmax">-</dd>
             </dl>
           </div>
@@ -96,6 +99,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=14"></script>
 </body>
 </html>
