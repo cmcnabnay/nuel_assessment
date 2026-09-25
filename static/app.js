@@ -193,9 +193,6 @@ function renderHistoryChart() {
 
 // --- Daily high / low (temperature tab) ---
 
-const HIGH_COLOR = "#dc2626";
-const LOW_COLOR = "#1e3a8a";
-
 // Local calendar day ("YYYY-MM-DD") and hour (0-23) of `iso` in the city's timezone.
 // formatToParts keeps this independent of the viewer's locale date format.
 function cityDayAndHour(iso) {
@@ -246,8 +243,8 @@ function renderDailyHighLow(containerId, points) {
     if (d.partial) chip.title = "Partial day: only some hours are covered, so the true high/low may differ.";
     const name = formatCityTime(d.at, { weekday: "short", month: "numeric", day: "numeric" });
     chip.innerHTML =
-      `<div class="day-name">${name}${d.partial ? " (partial)" : ""}</div>` +
-      `<span class="high">H ${fmt(cfg, points[d.high].value)}</span> · ` +
+      `<span class="day-name">${name}${d.partial ? " (partial)" : ""}</span>` +
+      `<span class="high">H ${fmt(cfg, points[d.high].value)}</span>` +
       `<span class="low">L ${fmt(cfg, points[d.low].value)}</span>`;
     box.appendChild(chip);
   });
@@ -278,23 +275,6 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
   const values = points.map((p) => (p.value === null ? null : cfg.value(p.value)));
   const unit = cfg.unit().trim();
 
-  // On the temperature tab, mark each day's high (red) and low (blue) on the line.
-  const marks = {};
-  if (state.series === "temperature") {
-    dailyHighLow(points).forEach((d) => {
-      marks[d.high] = { color: HIGH_COLOR, text: "Daily high" };
-      marks[d.low] = { color: LOW_COLOR, text: "Daily low" };
-    });
-  }
-  const baseRadius = dashed ? 2 : 3;
-  const markStyle = state.series === "temperature"
-    ? {
-        pointRadius: values.map((_, i) => (marks[i] ? 6 : baseRadius)),
-        pointBackgroundColor: values.map((_, i) => marks[i]?.color ?? cfg.color),
-        pointBorderColor: values.map((_, i) => (marks[i] ? "#fff" : cfg.color)),
-      }
-    : {};
-
   state.charts[canvasId]?.destroy();
   state.charts[canvasId] = new Chart(ctx, {
     type: cfg.chart,
@@ -314,19 +294,15 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
           : {
               backgroundColor: `${cfg.color}33`,
               tension: 0.25,
-              pointRadius: baseRadius,
+              pointRadius: dashed ? 2 : 3,
               fill: true,
               borderDash: dashed ? [6, 4] : [],
-              ...markStyle,
             }),
       }],
     },
     options: {
       responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { afterLabel: (item) => marks[item.dataIndex]?.text ?? "" } },
-      },
+      plugins: { legend: { display: false } },
       scales: { y: { beginAtZero: state.series !== "temperature", title: { display: true, text: unit } } },
     },
   });
