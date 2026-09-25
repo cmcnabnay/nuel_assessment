@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=14" />
+<link rel="stylesheet" href="/static/style.css?v=16" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -70,14 +70,14 @@
           <div class="card metrics">
             <div class="card-label">Derived metrics</div>
             <dl>
-              <dt><label for="change-base">Change since</label>
-                <select id="change-base" class="base-select" data-metric="change"></select></dt>
+              <dt>Change since
+                <button type="button" class="base-picker" data-metric="change" aria-haspopup="dialog">-</button></dt>
               <dd id="metric-change">-</dd>
-              <dt><label for="avg-base">Average since</label>
-                <select id="avg-base" class="base-select" data-metric="avg"></select></dt>
+              <dt>Average since
+                <button type="button" class="base-picker" data-metric="avg" aria-haspopup="dialog">-</button></dt>
               <dd id="metric-avg">-</dd>
-              <dt><label for="minmax-base">Min / Max since</label>
-                <select id="minmax-base" class="base-select" data-metric="minmax"></select></dt>
+              <dt>Min / Max since
+                <button type="button" class="base-picker" data-metric="minmax" aria-haspopup="dialog">-</button></dt>
               <dd id="metric-minmax">-</dd>
             </dl>
           </div>
@@ -99,6 +99,8 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=14"></script>
+  <div id="pull-picker" class="pull-picker hidden" role="dialog" aria-label="Choose a pull"></div>
+
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>

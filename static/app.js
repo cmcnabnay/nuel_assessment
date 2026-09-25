@@ -183,7 +183,7 @@ async function loadHistory(city) {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-// Fills the three "since" dropdowns with every pull except the latest, newest first.
+// Resets each metric's "since" pull if it no longer applies, then relabels the buttons.
 // Keeps the user's choice if that pull still exists, else picks the default:
 // previous pull (change), the server's ROLLING_WINDOW pulls back (average), oldest (min/max).
 function populateBaseSelects() {
@@ -196,22 +196,162 @@ function populateBaseSelects() {
   };
   const known = new Set(h.map((r) => r.pulled_at));
 
-  document.querySelectorAll(".base-select").forEach((select) => {
-    const metric = select.dataset.metric;
+  document.querySelectorAll(".base-picker").forEach((btn) => {
+    const metric = btn.dataset.metric;
     if (!known.has(state.bases[metric]) || state.bases[metric] === h[n - 1]?.pulled_at) {
       state.bases[metric] = defaults[metric] ?? null;
     }
-    select.innerHTML = "";
-    for (let i = n - 2; i >= 0; i--) {
-      const opt = document.createElement("option");
-      opt.value = h[i].pulled_at;
-      opt.textContent = formatCityTime(h[i].pulled_at);
-      select.appendChild(opt);
-    }
-    select.disabled = n < 2;
-    if (state.bases[metric]) select.value = state.bases[metric];
+    btn.disabled = n < 2;
+  });
+  closePicker();
+  updatePickerLabels();
+}
+
+function updatePickerLabels() {
+  document.querySelectorAll(".base-picker").forEach((btn) => {
+    const at = state.bases[btn.dataset.metric];
+    btn.textContent = at ? formatCityTime(at) : "n/a (need 2+ pulls)";
   });
 }
+
+// --- Pop-up calendar for choosing a pull: pick a day, then one of that day's times ---
+
+const picker = { metric: null, anchor: null, year: 0, month: 0, day: null };
+
+// Every pull except the latest, grouped by local day: {"YYYY-MM-DD": [pulled_at, ...]}.
+function pullsByDay() {
+  const byDay = {};
+  state.history.slice(0, -1).forEach((r) => {
+    (byDay[cityDayAndHour(r.pulled_at).day] ??= []).push(r.pulled_at);
+  });
+  return byDay;
+}
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const dayKey = (y, m, d) => `${y}-${pad2(m)}-${pad2(d)}`;
+
+function openPicker(btn) {
+  const selected = state.bases[btn.dataset.metric];
+  const [y, m] = cityDayAndHour(selected).day.split("-").map(Number);
+  Object.assign(picker, { metric: btn.dataset.metric, anchor: btn, year: y, month: m, day: null });
+  document.querySelectorAll(".base-picker").forEach((b) => b.setAttribute("aria-expanded", String(b === btn)));
+  renderPicker();
+  el("pull-picker").classList.remove("hidden");
+  positionPicker();
+}
+
+function closePicker() {
+  picker.metric = null;
+  el("pull-picker").classList.add("hidden");
+  document.querySelectorAll(".base-picker").forEach((b) => b.setAttribute("aria-expanded", "false"));
+}
+
+// Places the pop-up under its button, kept inside the viewport on narrow screens.
+function positionPicker() {
+  const pop = el("pull-picker");
+  const r = picker.anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  const left = Math.min(Math.max(8, r.left), document.documentElement.clientWidth - width - 8);
+  pop.style.left = `${left + window.scrollX}px`;
+  pop.style.top = `${r.bottom + window.scrollY + 4}px`;
+}
+
+function renderPicker() {
+  const pop = el("pull-picker");
+  const byDay = pullsByDay();
+  const selected = state.bases[picker.metric];
+  pop.innerHTML = picker.day ? timesView(byDay[picker.day] ?? [], selected) : calendarView(byDay, selected);
+}
+
+function calendarView(byDay, selected) {
+  const { year: y, month: m } = picker;
+  const days = Object.keys(byDay).sort();
+  const monthKey = `${y}-${pad2(m)}`;
+  const canPrev = days.length && days[0].slice(0, 7) < monthKey;
+  const canNext = days.length && days[days.length - 1].slice(0, 7) > monthKey;
+  const title = new Date(Date.UTC(y, m - 1, 1)).toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+  const selectedDay = selected ? cityDayAndHour(selected).day : null;
+  const today = cityDayAndHour(new Date().toISOString()).day;
+
+  const cells = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => `<div class="pp-dow">${d}</div>`);
+  const firstWeekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+  for (let i = 0; i < firstWeekday; i++) cells.push("<div></div>");
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = dayKey(y, m, d);
+    const count = byDay[key]?.length ?? 0;
+    const cls = ["pp-day", count && "has-pulls", key === selectedDay && "selected", key === today && "today"]
+      .filter(Boolean).join(" ");
+    const title = count ? `${count} pull${count === 1 ? "" : "s"}` : "No pulls";
+    cells.push(`<button type="button" class="${cls}" data-day="${key}" title="${title}" ${count ? "" : "disabled"}>${d}</button>`);
+  }
+
+  return `
+    <div class="pp-head">
+      <button type="button" class="pp-nav" data-nav="-1" aria-label="Previous month" ${canPrev ? "" : "disabled"}>‹</button>
+      <span class="pp-title">${title}</span>
+      <button type="button" class="pp-nav" data-nav="1" aria-label="Next month" ${canNext ? "" : "disabled"}>›</button>
+    </div>
+    <div class="pp-grid">${cells.join("")}</div>
+    <div class="pp-hint">Pick a day with pulls, then a time. Times are ${timeZoneNote().slice(1, -1)}.</div>`;
+}
+
+function timesView(times, selected) {
+  const [y, m, d] = picker.day.split("-").map(Number);
+  const title = new Date(Date.UTC(y, m - 1, d)).toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
+  });
+  const buttons = times
+    .map((at) => {
+      const label = formatCityTime(at, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+      return `<button type="button" class="pp-time${at === selected ? " selected" : ""}" data-at="${at}">${label}</button>`;
+    })
+    .join("");
+  return `
+    <div class="pp-head">
+      <button type="button" class="pp-nav" data-back aria-label="Back to calendar">‹</button>
+      <span class="pp-title">${title}</span>
+      <span></span>
+    </div>
+    <div class="pp-times">${buttons}</div>`;
+}
+
+el("pull-picker").addEventListener("click", (e) => {
+  const target = e.target.closest("button");
+  if (!target || target.disabled) return;
+  if (target.dataset.nav) {
+    const next = new Date(Date.UTC(picker.year, picker.month - 1 + Number(target.dataset.nav), 1));
+    picker.year = next.getUTCFullYear();
+    picker.month = next.getUTCMonth() + 1;
+  } else if (target.dataset.day) {
+    picker.day = target.dataset.day;
+  } else if ("back" in target.dataset) {
+    picker.day = null;
+  } else if (target.dataset.at) {
+    state.bases[picker.metric] = target.dataset.at;
+    closePicker();
+    updatePickerLabels();
+    renderSeries();
+    return;
+  }
+  renderPicker();
+});
+
+document.querySelectorAll(".base-picker").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (picker.metric === btn.dataset.metric) closePicker();
+    else openPicker(btn);
+  });
+});
+
+// Close on a click outside the pop-up (and its buttons) or on Escape.
+document.addEventListener("mousedown", (e) => {
+  if (picker.metric && !e.target.closest("#pull-picker, .base-picker")) closePicker();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && picker.metric) closePicker();
+});
+window.addEventListener("resize", () => picker.metric && positionPicker());
 
 // Values of the current series from the pull at `since` through the latest, in °C
 // (unit conversion happens at display time), skipping readings that are missing.
@@ -246,12 +386,6 @@ function renderSelectedMetrics(cfg) {
     : "n/a";
 }
 
-document.querySelectorAll(".base-select").forEach((select) => {
-  select.addEventListener("change", () => {
-    state.bases[select.dataset.metric] = select.value;
-    renderSeries();
-  });
-});
 
 async function loadForecast(city) {
   try {
