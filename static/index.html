@@ -3,13 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=21" />
+<title>Clearday – weather &amp; trip planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap" />
+<link rel="stylesheet" href="/static/style.css?v=25" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
-<body>
+<body class="sky-clear-day">
   <header>
-    <h1>Weather Dashboard</h1>
+    <h1 class="brand"><span id="brand-icon" class="brand-icon" aria-hidden="true"></span><span class="brand-name">Clearday</span></h1>
     <form id="search-form">
       <div class="search-box">
         <input id="city-input" type="text" placeholder="Type a city, e.g. Lisbon" autocomplete="off" required
@@ -56,9 +59,12 @@
         </div>
 
         <div class="card current conditions">
-          <div class="card-label">Current conditions in <span id="city-name">-</span></div>
-          <div id="weather-desc" class="weather-desc">-</div>
-          <div class="local-time">Local time <span id="local-time">-</span></div>
+          <div>
+            <div class="card-label">Current conditions in <span id="city-name">-</span></div>
+            <div id="weather-desc" class="weather-desc">-</div>
+            <div class="local-time">Local time <span id="local-time">-</span></div>
+          </div>
+          <div id="condition-icon" class="condition-icon" role="img" aria-label=""></div>
         </div>
 
         <div id="metric-panel" role="tabpanel">
@@ -69,7 +75,7 @@
           </div>
 
           <div class="card metrics">
-            <div class="card-label">Derived metrics</div>
+            <div class="card-label">Metrics</div>
             <dl>
               <dt>Change since
                 <button type="button" class="base-picker" data-metric="change" aria-haspopup="dialog">-</button></dt>
@@ -121,6 +127,6 @@
 
   <div id="pull-picker" class="pull-picker hidden" role="dialog" aria-label="Choose a pull"></div>
 
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=25"></script>
 </body>
 </html>

@@ -20,6 +20,7 @@ def make_weather(temperature):
         "humidity": 60.0,
         "precipitation": 0.0,
         "weathercode": 0,
+        "is_day": 1,
         "daily": {
             "time": ["2026-09-22"],
             "temperature_2m_max": [temperature + 3],
@@ -50,6 +51,7 @@ def test_pull_then_latest_and_history(client, monkeypatch):
     assert body["snapshot"]["temperature"] == 20.0
     assert body["metrics"]["series"]["temperature"]["change_since_last_pull"] is None  # only one pull so far
     assert body["snapshot"]["humidity"] == 60.0
+    assert body["snapshot"]["is_day"] == 1
     assert body["status"] == "ok"
     assert body["city"]["timezone"] == "Europe/Paris"
 
@@ -184,7 +186,7 @@ def test_forecast_returns_hours_from_latest_pull_onward(client, monkeypatch):
     resp = client.get("/api/forecast", params={"city": "Paris"})
     assert resp.status_code == 200
     assert resp.json() == [{"time": "2999-01-01T00:00:00.000000+00:00", "temperature": 25.0,
-                            "precipitation": 1.5, "windspeed": 9.0, "humidity": 40}]
+                            "precipitation": 1.5, "windspeed": 9.0, "humidity": 40, "weathercode": 61}]
 
 
 def test_forecast_is_empty_when_no_pull_stored_one(client, monkeypatch):

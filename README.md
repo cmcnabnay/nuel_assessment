@@ -2,10 +2,10 @@
 
 This project is a small pipeline  dashboard built around [Open-Meteo](https://open-meteo.com)
 that pulls weather for any city you type in, stores every pull as a
-timestamped snapshot in SQLite, computes a few derived metrics from the accumulated
+timestamped snapshot in SQLite, computes metrics between snapshots from the accumulated
 history, and asks an open-source LLM via
-[OpenRouter](https://openrouter.ai) to suggest a short itinerary based on the
-current forecast.
+[OpenRouter](https://openrouter.ai) to suggest a travel itinerary based on the
+current forecast for the selected city.
 
 ## Stack
 

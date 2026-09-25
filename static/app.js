@@ -49,6 +49,111 @@ function weatherDescription(code) {
   return WEATHER_CODES[code] ?? `Weather code ${code}`;
 }
 
+// Chart.js styling for white-on-glass charts.
+if (window.Chart) {
+  Chart.defaults.color = "rgba(255, 255, 255, 0.78)";
+  Chart.defaults.borderColor = "rgba(255, 255, 255, 0.12)";
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+}
+
+// --- Weather icons and sky ---
+
+// The condition families the icons and sky backgrounds cover, from a WMO code.
+function conditionGroup(code) {
+  if (code === 0) return "clear";
+  if (code === 1 || code === 2) return "partly";
+  if (code === 3) return "cloudy";
+  if (code === 45 || code === 48) return "fog";
+  if (code >= 51 && code <= 57) return "drizzle";
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return "rain";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if (code >= 95) return "storm";
+  return "cloudy";
+}
+
+// Inline SVG pieces on a 64x64 canvas; composed per condition in weatherIcon().
+const ICON_PARTS = {
+  sun: (cx, cy, r) => {
+    const rays = [...Array(8)].map((_, i) => {
+      const a = (i * Math.PI) / 4;
+      const [x1, y1, x2, y2] = [r + 4, r + 4, r + 9, r + 9].map((d, j) =>
+        (j % 2 ? cy + Math.sin(a) * d : cx + Math.cos(a) * d).toFixed(1));
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+    }).join("");
+    return `<g stroke="#FFD23F" stroke-width="3.5" stroke-linecap="round">${rays}</g>` +
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#FFD23F"/>`;
+  },
+  moon: (cx, cy, s) =>
+    `<path transform="translate(${cx - 32 * s} ${cy - 32 * s}) scale(${s})" fill="#F6F1C7" ` +
+    `d="M38 12a21 21 0 1 0 15 33A17 17 0 0 1 38 12z"/>`,
+  cloud: (dx, dy, s, fill) =>
+    `<path transform="translate(${dx} ${dy}) scale(${s})" fill="${fill}" ` +
+    `d="M19 48h27a11 11 0 0 0 1.5-21.9A15 15 0 0 0 19.4 25 11.5 11.5 0 0 0 19 48z"/>`,
+  rain: (color = "#7CC4FF") =>
+    `<g stroke="${color}" stroke-width="3.5" stroke-linecap="round">` +
+    `<line x1="24" y1="49" x2="20.5" y2="57"/><line x1="33" y1="49" x2="29.5" y2="57"/>` +
+    `<line x1="42" y1="49" x2="38.5" y2="57"/></g>`,
+  drizzle: () =>
+    `<g fill="#9DD3FF"><circle cx="23" cy="52" r="2"/><circle cx="32" cy="55" r="2"/>` +
+    `<circle cx="41" cy="52" r="2"/><circle cx="27.5" cy="59" r="2"/><circle cx="36.5" cy="59" r="2"/></g>`,
+  snow: () =>
+    `<g fill="#FFFFFF"><circle cx="23" cy="52" r="2.6"/><circle cx="33" cy="55" r="2.6"/>` +
+    `<circle cx="43" cy="52" r="2.6"/><circle cx="28" cy="60" r="2.6"/><circle cx="38" cy="60" r="2.6"/></g>`,
+  bolt: () => `<path fill="#FFD23F" d="M34 42l-8 12h6l-3 9 11-14h-6l4-7z"/>`,
+  fog: () =>
+    `<g stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="3.5" stroke-linecap="round">` +
+    `<line x1="14" y1="50" x2="50" y2="50"/><line x1="20" y1="57" x2="44" y2="57"/></g>`,
+};
+
+// Returns an SVG string for a condition group, with a sun or moon where it shows.
+function weatherIcon(group, isDay) {
+  const P = ICON_PARTS;
+  const orb = (cx, cy, r) => (isDay ? P.sun(cx, cy, r) : P.moon(cx, cy, r / 12));
+  const precipCloud = (fill) => P.cloud(-1, -8, 1, fill);
+  const body = {
+    clear: orb(32, 32, 13),
+    partly: orb(24, 22, 9) + P.cloud(4, 4, 0.92, "#FFFFFF"),
+    cloudy: P.cloud(10, -6, 0.72, "#C3CFDD") + P.cloud(0, 2, 1, "#F3F6FA"),
+    fog: P.cloud(0, -6, 1, "#E6ECF3") + P.fog(),
+    drizzle: precipCloud("#EEF2F7") + P.drizzle(),
+    rain: precipCloud("#DCE3EC") + P.rain(),
+    snow: precipCloud("#F3F6FA") + P.snow(),
+    storm: precipCloud("#9AA6B8") + P.bolt(),
+  }[group] ?? P.cloud(0, 2, 1, "#F3F6FA");
+  return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${body}</svg>`;
+}
+
+// Day or night for a snapshot: Open-Meteo's is_day when stored, else the city's local
+// hour (6 AM to 7 PM counts as day) for pulls made before is_day was recorded.
+function isDaytime(snapshot) {
+  if (snapshot.is_day === 0 || snapshot.is_day === 1) return snapshot.is_day === 1;
+  const { hour } = cityDayAndHour(snapshot.pulled_at);
+  return hour >= 6 && hour < 19;
+}
+
+function renderConditionVisuals(snapshot) {
+  const group = conditionGroup(snapshot.weathercode);
+  const day = isDaytime(snapshot);
+  const sky = group === "drizzle" ? "rain" : group;
+  document.body.className = document.body.className.replace(/\bsky-\S+/g, "").trim();
+  document.body.classList.add(`sky-${sky}-${day ? "day" : "night"}`);
+  el("condition-icon").innerHTML = weatherIcon(group, day);
+  el("condition-icon").setAttribute("aria-label", weatherDescription(snapshot.weathercode));
+}
+
+// Most common condition over a day's daytime readings (8 AM to 8 PM local), so a chip's
+// icon reflects the day rather than the night. Falls back to all readings.
+function dominantGroup(readings) {
+  const daytime = readings.filter((r) => r.hour >= 8 && r.hour <= 20);
+  const counts = {};
+  (daytime.length ? daytime : readings).forEach((r) => {
+    if (r.code === null || r.code === undefined) return;
+    const g = conditionGroup(r.code);
+    counts[g] = (counts[g] || 0) + 1;
+  });
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
 // Returns the stored value if it's one of `allowed`, else the first allowed value.
 function loadPref(key, allowed) {
   try {
@@ -79,10 +184,10 @@ const identity = (v) => v;
 
 // Per-tab display config. `value` converts an absolute reading, `delta` a difference.
 const SERIES = {
-  temperature: { label: "Temperature", unit: deg, value: toUnit, delta: deltaToUnit, chart: "line", color: "#2563eb" },
-  precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#0369a1" },
-  windspeed: { label: "Wind speed", unit: windUnitLabel, value: toWindUnit, delta: toWindUnit, chart: "line", color: "#7c3aed" },
-  humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#059669" },
+  temperature: { label: "Temperature", unit: deg, value: toUnit, delta: deltaToUnit, chart: "line", color: "#ffd479" },
+  precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#7cc4ff" },
+  windspeed: { label: "Wind speed", unit: windUnitLabel, value: toWindUnit, delta: toWindUnit, chart: "line", color: "#d3c4ff" },
+  humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#86e8c0" },
 };
 
 // Times are stored in UTC; show them in the selected city's own timezone so a
@@ -129,6 +234,7 @@ function renderLatest(payload) {
 
   el("city-name").textContent = payload.city.display_name + (payload.city.country ? `, ${payload.city.country}` : "");
   el("weather-desc").textContent = weatherDescription(payload.snapshot.weathercode);
+  renderConditionVisuals(payload.snapshot);
   el("pulled-at").textContent = formatCityTime(payload.snapshot.pulled_at, { timeZoneName: "short" });
   el("metric-count").textContent = payload.metrics.pull_count;
   renderSeries();
@@ -427,7 +533,7 @@ function renderHistoryChart() {
   const startDay = historyStartDay(); // "YYYY-MM-DD", compares correctly as a string
   const points = state.history
     .filter((r) => cityDayAndHour(r.pulled_at).day >= startDay)
-    .map((r) => ({ at: r.pulled_at, value: r[state.series] }));
+    .map((r) => ({ at: r.pulled_at, value: r[state.series], code: r.weathercode }));
   drawChart("history-chart", points);
   renderDailyHighLow("history-hl", points);
 }
@@ -456,12 +562,13 @@ function dailyHighLow(points) {
   let current = null;
   points.forEach((p, i) => {
     if (p.value === null || p.value === undefined) return;
-    const key = cityDayAndHour(p.at).day;
+    const { day: key, hour } = cityDayAndHour(p.at);
     if (!current || current.key !== key) {
-      current = { key, at: p.at, first: p.at, last: p.at, high: i, low: i };
+      current = { key, at: p.at, first: p.at, last: p.at, high: i, low: i, readings: [] };
       days.push(current);
     }
     current.last = p.at;
+    current.readings.push({ hour, code: p.code });
     if (p.value > points[current.high].value) current.high = i;
     if (p.value < points[current.low].value) current.low = i;
   });
@@ -483,8 +590,10 @@ function renderDailyHighLow(containerId, points) {
     chip.className = `day${d.partial ? " partial" : ""}`;
     if (d.partial) chip.title = "Partial day: only some hours are covered, so the true high/low may differ.";
     const name = formatCityTime(d.at, { weekday: "short", month: "numeric", day: "numeric" });
+    const group = dominantGroup(d.readings);
     chip.innerHTML =
       `<span class="day-name">${name}${d.partial ? " (partial)" : ""}</span>` +
+      (group ? `<span class="day-icon" title="${group}">${weatherIcon(group, true)}</span>` : "") +
       `<span class="high">H ${fmt(cfg, points[d.high].value)}</span>` +
       `<span class="low">L ${fmt(cfg, points[d.low].value)}</span>`;
     box.appendChild(chip);
@@ -502,7 +611,7 @@ function renderForecastChart() {
     delete state.charts["forecast-chart"];
     return;
   }
-  const points = state.forecast.map((r) => ({ at: r.time, value: r[state.series] }));
+  const points = state.forecast.map((r) => ({ at: r.time, value: r[state.series], code: r.weathercode }));
   drawChart("forecast-chart", points, { dashed: true });
   renderDailyHighLow("forecast-hl", points);
 }
@@ -511,7 +620,9 @@ function renderForecastChart() {
 function drawChart(canvasId, points, { dashed = false } = {}) {
   const cfg = SERIES[state.series];
   const ctx = el(canvasId).getContext("2d");
-  const labels = points.map((p) => formatCityTime(p.at));
+  const labels = points.map((p) => formatCityTime(p.at)); // full time, shown in tooltips
+  // Short axis ticks ("Fri 6 AM") so the axis stays readable with hundreds of points.
+  const ticks = points.map((p) => formatCityTime(p.at, { weekday: "short", hour: "numeric" }));
   // null (pre-migration rows) leaves a gap in the chart rather than plotting 0.
   const values = points.map((p) => (p.value === null ? null : cfg.value(p.value)));
   const unit = cfg.unit().trim();
@@ -533,7 +644,9 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
               barThickness: Math.max(6, Math.floor(ctx.canvas.parentElement.clientWidth / values.length)),
             }
           : {
-              backgroundColor: `${cfg.color}33`,
+              backgroundColor: `${cfg.color}2e`,
+              pointBackgroundColor: cfg.color,
+              pointBorderColor: cfg.color,
               tension: 0.25,
               pointRadius: dashed ? 2 : 3,
               fill: true,
@@ -544,7 +657,13 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: state.series !== "temperature", title: { display: true, text: unit } } },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8, callback: (_, i) => ticks[i] },
+        },
+        y: { beginAtZero: state.series !== "temperature", title: { display: true, text: unit } },
+      },
     },
   });
 }
@@ -974,3 +1093,5 @@ refreshCityList(null).then(async () => {
   const cities = await api("/api/cities");
   if (cities.length > 0) selectCity(cities[0].query_name);
 });
+
+el("brand-icon").innerHTML = weatherIcon("partly", true);
