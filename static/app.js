@@ -183,10 +183,22 @@ function renderCharts() {
   renderForecastChart();
 }
 
+// The history chart shows a rolling window: local midnight 7 days ago through now, so
+// on 9/25 it starts at 9/18 12:00 AM (city time) and shows 8 days including today.
+const HISTORY_DAYS_BACK = 7;
+
+function historyStartDay() {
+  const [y, m, d] = cityDayAndHour(new Date().toISOString()).day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - HISTORY_DAYS_BACK)).toISOString().slice(0, 10);
+}
+
 function renderHistoryChart() {
   el("chart-title").textContent = SERIES[state.series].label;
   el("history-tz").textContent = timeZoneNote();
-  const points = state.history.map((r) => ({ at: r.pulled_at, value: r[state.series] }));
+  const startDay = historyStartDay(); // "YYYY-MM-DD", compares correctly as a string
+  const points = state.history
+    .filter((r) => cityDayAndHour(r.pulled_at).day >= startDay)
+    .map((r) => ({ at: r.pulled_at, value: r[state.series] }));
   drawChart("history-chart", points);
   renderDailyHighLow("history-hl", points);
 }
