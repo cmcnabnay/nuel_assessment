@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=18" />
+<link rel="stylesheet" href="/static/style.css?v=20" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -21,6 +21,10 @@
     <div id="unit-toggle" class="unit-toggle" role="group" aria-label="Temperature unit">
       <button type="button" data-unit="C" aria-pressed="true">&deg;C</button>
       <button type="button" data-unit="F" aria-pressed="false">&deg;F</button>
+    </div>
+    <div id="wind-toggle" class="unit-toggle hidden" role="group" aria-label="Wind speed unit">
+      <button type="button" data-wind="kmh" aria-pressed="true">km/h</button>
+      <button type="button" data-wind="mph" aria-pressed="false">mph</button>
     </div>
   </header>
 
@@ -108,6 +112,6 @@
 
   <div id="pull-picker" class="pull-picker hidden" role="dialog" aria-label="Choose a pull"></div>
 
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

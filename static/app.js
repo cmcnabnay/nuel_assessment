@@ -17,6 +17,7 @@ const state = {
   bases: { change: null, avg: null, minmax: null },
   forecast: [],
   unit: loadPref("unit", ["C", "F"]),
+  windUnit: loadPref("windUnit", ["kmh", "mph"]),
   series: loadPref("series", ["temperature", "precipitation", "windspeed", "humidity"]),
   // Selected tab: one of the series above, or "itinerary".
   tab: null,
@@ -70,13 +71,17 @@ const toUnit = (c) => (state.unit === "F" ? round1(c * 9 / 5 + 32) : c);
 // A temperature *difference* converts without the +32 offset.
 const deltaToUnit = (dc) => (state.unit === "F" ? round1(dc * 9 / 5) : dc);
 const deg = () => `°${state.unit}`;
+// Wind is stored in km/h; mph is converted here for display only (a speed difference
+// converts with the same factor, since there's no offset).
+const toWindUnit = (kmh) => (state.windUnit === "mph" ? round1(kmh * 0.621371) : kmh);
+const windUnitLabel = () => (state.windUnit === "mph" ? " mph" : " km/h");
 const identity = (v) => v;
 
 // Per-tab display config. `value` converts an absolute reading, `delta` a difference.
 const SERIES = {
   temperature: { label: "Temperature", unit: deg, value: toUnit, delta: deltaToUnit, chart: "line", color: "#2563eb" },
   precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#0369a1" },
-  windspeed: { label: "Wind speed", unit: () => " km/h", value: identity, delta: identity, chart: "line", color: "#7c3aed" },
+  windspeed: { label: "Wind speed", unit: windUnitLabel, value: toWindUnit, delta: toWindUnit, chart: "line", color: "#7c3aed" },
   humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#059669" },
 };
 
@@ -691,16 +696,30 @@ el("refresh-btn").addEventListener("click", () => {
 function setUnit(unit) {
   state.unit = unit;
   savePref("unit", unit);
-  document.querySelectorAll(".unit-toggle button").forEach((b) => {
+  document.querySelectorAll("#unit-toggle button").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.unit === unit));
   });
   if (state.lastPayload) renderLatest(state.lastPayload);
 }
 
-document.querySelectorAll(".unit-toggle button").forEach((b) => {
+document.querySelectorAll("#unit-toggle button").forEach((b) => {
   b.addEventListener("click", () => setUnit(b.dataset.unit));
 });
 setUnit(state.unit);
+
+function setWindUnit(unit) {
+  state.windUnit = unit;
+  savePref("windUnit", unit);
+  document.querySelectorAll("#wind-toggle button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.wind === unit));
+  });
+  if (state.lastPayload) renderLatest(state.lastPayload);
+}
+
+document.querySelectorAll("#wind-toggle button").forEach((b) => {
+  b.addEventListener("click", () => setWindUnit(b.dataset.wind));
+});
+setWindUnit(state.windUnit);
 
 function setTab(tab) {
   const isItinerary = tab === "itinerary";
@@ -716,6 +735,7 @@ function setTab(tab) {
   el("metric-panel").classList.toggle("hidden", isItinerary);
   el("itinerary-panel").classList.toggle("hidden", !isItinerary);
   el("unit-toggle").classList.toggle("hidden", tab !== "temperature");
+  el("wind-toggle").classList.toggle("hidden", tab !== "windspeed");
   closePicker();
   // Charts drawn while their panel was hidden have no size; redraw on the way back.
   if (!isItinerary && state.lastPayload) renderLatest(state.lastPayload);
@@ -793,7 +813,7 @@ el("itinerary-btn").addEventListener("click", async () => {
   const city = state.currentCity;
   const btn = el("itinerary-btn");
   btn.disabled = true;
-  el("itinerary-status").textContent = "Asking the model... a full itinerary can take up to a minute.";
+  el("itinerary-status").textContent = "Asking the model...";
   el("itinerary-content").innerHTML = "";
   try {
     const payload = await api(`/api/itinerary?city=${encodeURIComponent(city)}`);
