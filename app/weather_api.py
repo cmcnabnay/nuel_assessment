@@ -55,6 +55,42 @@ def geocode_by_id(location_id):
     return _location(_geocode_get(GEOCODE_BY_ID_URL, {"id": location_id}))
 
 
+def fetch_hourly_history(latitude, longitude, start_date, end_date):
+    """Hourly readings (UTC) between two dates, inclusive, for backfilling history.
+
+    Returns a list of dicts shaped like fetch_weather()'s current reading, plus `time`.
+    """
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "hourly": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code",
+        "start_date": start_date,
+        "end_date": end_date,
+        "timezone": "UTC",
+    }
+    try:
+        resp = requests.get(FORECAST_URL, params=params, timeout=TIMEOUT_SECONDS)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise UpstreamError(f"History request failed: {exc}") from exc
+
+    hourly = resp.json().get("hourly")
+    if not hourly:
+        raise UpstreamError("History response was missing 'hourly'")
+
+    return [
+        {
+            "time": t,
+            "temperature": hourly["temperature_2m"][i],
+            "humidity": hourly["relative_humidity_2m"][i],
+            "precipitation": hourly["precipitation"][i],
+            "windspeed": hourly["wind_speed_10m"][i],
+            "weathercode": hourly["weather_code"][i],
+        }
+        for i, t in enumerate(hourly["time"])
+    ]
+
+
 def fetch_weather(latitude, longitude, tz="auto"):
     """Fetch current conditions plus a short daily forecast for a coordinate."""
     params = {

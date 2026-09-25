@@ -70,7 +70,7 @@ const identity = (v) => v;
 // Per-tab display config. `value` converts an absolute reading, `delta` a difference.
 const SERIES = {
   temperature: { label: "Temperature", unit: deg, value: toUnit, delta: deltaToUnit, chart: "line", color: "#2563eb" },
-  precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#0891b2" },
+  precipitation: { label: "Precipitation", unit: () => " mm", value: identity, delta: identity, chart: "bar", color: "#0369a1" },
   windspeed: { label: "Wind speed", unit: () => " km/h", value: identity, delta: identity, chart: "line", color: "#7c3aed" },
   humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#059669" },
 };
@@ -162,10 +162,14 @@ function renderChart() {
         label: `${cfg.label} (${unit})`,
         data: values,
         borderColor: cfg.color,
-        backgroundColor: `${cfg.color}33`,
-        tension: 0.25,
-        pointRadius: 3,
-        fill: true,
+        ...(cfg.chart === "bar"
+          ? // Hundreds of hourly bars would each be ~2px wide; keep them solid and at least
+            // 6px so an isolated rainy hour stays visible (neighbors are usually 0 mm).
+            {
+              backgroundColor: cfg.color,
+              barThickness: Math.max(6, Math.floor(ctx.canvas.parentElement.clientWidth / values.length)),
+            }
+          : { backgroundColor: `${cfg.color}33`, tension: 0.25, pointRadius: 3, fill: true }),
       }],
     },
     options: {

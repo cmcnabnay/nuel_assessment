@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     humidity REAL,
     precipitation REAL,
     weathercode INTEGER,
-    forecast_json TEXT
+    forecast_json TEXT,
+    source TEXT NOT NULL DEFAULT 'live'
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_city_time ON snapshots (city_id, pulled_at);
@@ -32,7 +33,12 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_city_time ON snapshots (city_id, pulled
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't add them to
 # an existing weather.db, so init_db adds any that are missing.
-ADDED_SNAPSHOT_COLUMNS = {"humidity": "REAL", "precipitation": "REAL"}
+ADDED_SNAPSHOT_COLUMNS = {
+    "humidity": "REAL",
+    "precipitation": "REAL",
+    # 'live' for real pulls, 'backfill' for hourly history loaded by scripts/backfill.py.
+    "source": "TEXT NOT NULL DEFAULT 'live'",
+}
 
 
 def get_connection(db_path=None):
