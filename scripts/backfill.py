@@ -1,6 +1,6 @@
-"""Load hourly history for tracked cities from a start date up to each city's latest
-pull, filling hours that have no snapshot. Backfilled rows are tagged
-source='backfill' and can be removed with:
+"""Load hourly history for tracked cities from local midnight (in each city's own
+timezone) on a start date up to each city's latest pull, filling hours that have no
+snapshot. Backfilled rows are tagged source='backfill' and can be removed with:
 
     DELETE FROM snapshots WHERE source = 'backfill';
 
@@ -8,6 +8,8 @@ Usage:
     python scripts/backfill.py 2026-09-17                    # every tracked city
     python scripts/backfill.py 2026-09-17 Houston Detroit    # specific cities
     python scripts/backfill.py 2026-09-17 --dry-run          # count rows, write nothing
+    python scripts/backfill.py 2026-09-17 --trim             # also delete backfilled rows
+                                                             # from before that local midnight
 """
 import os
 import sys
@@ -16,13 +18,15 @@ from datetime import date
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app import db as db_module  # noqa: E402
-from app.backfill import backfill_city  # noqa: E402
+from app.backfill import backfill_city, trim_backfill_before  # noqa: E402
 from app.errors import UpstreamError  # noqa: E402
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    flags = {"--dry-run", "--trim"}
+    args = [a for a in sys.argv[1:] if a not in flags]
     dry_run = "--dry-run" in sys.argv
+    trim = "--trim" in sys.argv
     if not args:
         print(__doc__)
         return
@@ -49,7 +53,12 @@ def main():
                 print(f"Skipping {city['query_name']}: {exc}")
                 continue
             total += n
-            print(f"{city['query_name']}: {n} hourly rows {'would be ' if dry_run else ''}added")
+            would = "would be " if dry_run else ""
+            msg = f"{city['query_name']}: {n} hourly rows {would}added"
+            if trim:
+                removed = trim_backfill_before(conn, city, since, dry_run=dry_run)
+                msg += f", {removed} {would}removed"
+            print(msg)
         print(f"Total: {total}{' (dry run, nothing written)' if dry_run else ''}")
     finally:
         conn.close()
