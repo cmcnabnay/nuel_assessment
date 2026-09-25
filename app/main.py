@@ -250,7 +250,12 @@ def itinerary(city: str = Query(..., min_length=1)):
         except ItineraryError as exc:
             return JSONResponse({"error": str(exc)}, status_code=503)
 
-        # Either "days" (structured itinerary) or "text" (model's raw reply) is set.
-        return {"city": row["display_name"], "days": result.get("days"), "text": result.get("text")}
+        # Either "days" (structured itinerary) or "text" (model's prose reply) is set.
+        return {
+            "city": row["display_name"],
+            "days": result.get("days"),
+            "truncated": result.get("truncated", False),
+            "text": result.get("text"),
+        }
     finally:
         conn.close()

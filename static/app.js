@@ -799,7 +799,11 @@ el("itinerary-btn").addEventListener("click", async () => {
     const payload = await api(`/api/itinerary?city=${encodeURIComponent(city)}`);
     if (city !== state.currentCity) return; // user switched cities while waiting
     el("itinerary-status").textContent = "";
+    const cutOffNote = payload.truncated
+      ? `<p class="it-disclaimer">The model's reply was cut off, so this shows the stops that came through. Try again for the full plan.</p>`
+      : "";
     el("itinerary-content").innerHTML =
+      cutOffNote +
       (payload.days ? renderItineraryDays(payload.days) : renderMarkdown(payload.text || "")) +
       `<p class="it-disclaimer">AI-generated suggestions. Check opening hours, event schedules and reservations before you go.</p>`;
   } catch (err) {

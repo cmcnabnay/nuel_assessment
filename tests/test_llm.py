@@ -65,6 +65,7 @@ def test_suggest_itinerary_parses_fenced_json(monkeypatch):
         llm_module.requests, "post", lambda *a, **k: FakeResponse({"choices": [{"message": {"content": reply}}]})
     )
     result = llm_module.suggest_itinerary("Paris", CURRENT, None)
+    assert result["truncated"] is False
     (day,) = result["days"]
     assert day["title"] == "Art and a ballgame"
     assert day["events"] == [{"time": "10:00 AM", "title": "Impressionist wing", "place": "Musee d'Orsay, 7th arr.",
@@ -72,8 +73,36 @@ def test_suggest_itinerary_parses_fenced_json(monkeypatch):
 
 
 def test_parse_itinerary_rejects_json_without_events():
-    assert llm_module.parse_itinerary('{"days": [{"date": "2026-09-25", "events": []}]}') is None
-    assert llm_module.parse_itinerary("{not json}") is None
+    assert llm_module.parse_itinerary('{"days": [{"date": "2026-09-25", "events": []}]}') == (None, False)
+    assert llm_module.parse_itinerary("{not json}") == (None, False)
+
+
+def test_parse_itinerary_recovers_cut_off_reply():
+    # Real shape of a reply that hit max_tokens mid-string.
+    reply = (
+        '{"days": [{"date": "2026-09-25", "title": "Classic Left Bank & Seine", "weather_note": "Warm.", '
+        '"events": [{"time": "8:00 AM", "title": "Breakfast at Caf\\u00e9 de Flore", "place": "Caf\\u00e9 de Flore", '
+        '"category": "food", "details": "Say \\"bonjour\\" {politely}."}, '
+        '{"time": "11:00 AM", "title": "Mus\\u00e9e d\'Orsay", "place": "7th arrondissement", "category": "museum", '
+        '"details": "Impressionists."}, '
+        '{"time": "5:30 PM", "title": "Seine river cruise", "place": "Bateaux-Mouches, Pont de l\'Alma, 7th arrondissement'
+    )
+    days, truncated = llm_module.parse_itinerary(reply)
+    assert truncated is True
+    (day,) = days
+    assert [e["time"] for e in day["events"]] == ["8:00 AM", "11:00 AM"]  # the cut-off stop is dropped
+    assert day["events"][0]["details"] == 'Say "bonjour" {politely}.'  # braces/quotes in strings are not brackets
+
+
+def test_unusable_json_reply_raises_instead_of_showing_raw_json(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        llm_module.requests,
+        "post",
+        lambda *a, **k: FakeResponse({"choices": [{"message": {"content": '{"days": [{"date": "2026-09-25", "tit'}}]}),
+    )
+    with pytest.raises(ItineraryError, match="cut off or malformed"):
+        llm_module.suggest_itinerary("Paris", CURRENT, None)
 
 
 def test_build_prompt_describes_weather_in_words_and_both_units():

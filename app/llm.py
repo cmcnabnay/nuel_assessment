@@ -83,19 +83,69 @@ def build_prompt(city_display_name, current, daily, tz_name=None):
     return "\n".join(lines)
 
 
+def _close_truncated_json(text):
+    """Make a cut-off JSON reply parseable by keeping everything up to the last
+    object or array that closed, then closing whatever was still open.
+
+    e.g. '{"days": [{"events": [{"a": 1}, {"b": "cut of' -> '{"days": [{"events": [{"a": 1}]}]}'
+    Returns None if nothing ever closed.
+    """
+    stack, in_string, escaped = [], False, False
+    last_cut = None  # (index just after a closing bracket, brackets still open there)
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if not stack:
+                break
+            stack.pop()
+            last_cut = (i + 1, list(stack))
+    if not last_cut:
+        return None
+    end, still_open = last_cut
+    return text[:end] + "".join("}" if b == "{" else "]" for b in reversed(still_open))
+
+
+def _load_itinerary_json(content):
+    """Returns (data, truncated). Small models often wrap JSON in ```fences``` or add a
+    sentence around it, so this starts at the first "{". If the reply was cut off
+    (max_tokens, dropped connection), the complete part of it is recovered."""
+    start = content.find("{")
+    if start < 0:
+        return None, False
+    end = content.rfind("}")
+    if end > start:
+        try:
+            return json.loads(content[start : end + 1]), False
+        except json.JSONDecodeError:
+            pass
+    repaired = _close_truncated_json(content[start:])
+    if repaired:
+        try:
+            return json.loads(repaired), True
+        except json.JSONDecodeError:
+            pass
+    return None, False
+
+
 def parse_itinerary(content):
     """Pull the {"days": [...]} object out of the model's reply and normalize it.
 
-    Small models often wrap JSON in ```fences``` or add a sentence around it, so this
-    takes the outermost {...}. Returns None if there's no usable itinerary in it.
+    Returns (days, truncated): days is None if there's no usable itinerary in the reply;
+    truncated is True when only the complete part of a cut-off reply was recovered.
     """
-    start, end = content.find("{"), content.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        data = json.loads(content[start : end + 1])
-    except json.JSONDecodeError:
-        return None
+    data, truncated = _load_itinerary_json(content)
+    if data is None:
+        return None, False
 
     raw_days = data.get("days") if isinstance(data, dict) else None
     days = []
@@ -120,12 +170,14 @@ def parse_itinerary(content):
                 "weather_note": str(day.get("weather_note") or "").strip(),
                 "events": events,
             })
-    return days or None
+    return (days, truncated) if days else (None, False)
 
 
 def suggest_itinerary(city_display_name, current, daily, tz_name=None):
-    """Ask the model for an itinerary. Returns {"days": [...]} when it replied with
-    usable JSON, else {"text": "..."} with its raw reply so the page can still show it."""
+    """Ask the model for an itinerary. Returns {"days": [...], "truncated": bool} when
+    it replied with usable JSON, else {"text": "..."} with its prose reply so the page
+    can still show it. A reply that is JSON but unusable raises ItineraryError, so the
+    page never shows raw JSON."""
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise ItineraryError("OPENROUTER_API_KEY is not configured on the server")
@@ -137,10 +189,11 @@ def suggest_itinerary(city_display_name, current, daily, tz_name=None):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": build_prompt(city_display_name, current, daily, tz_name)},
         ],
-        # Generous headroom: a 3-day, 5-7 stop itinerary is long, and some free-tier
-        # models are "reasoning" models that spend part of the budget on hidden
-        # chain-of-thought before the final answer.
-        "max_tokens": 4000,
+        # Generous headroom: a 3-day, 5-7 stop itinerary runs to a few thousand tokens,
+        # and some free-tier models are "reasoning" models that spend part of the budget
+        # on hidden chain-of-thought before the final answer. Cut-off replies are still
+        # recovered up to the last complete stop (see parse_itinerary).
+        "max_tokens": 8000,
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -164,5 +217,10 @@ def suggest_itinerary(city_display_name, current, daily, tz_name=None):
         # chain-of-thought and return no visible answer at all.
         raise ItineraryError("Model returned no content -- try again or pick a different model")
 
-    days = parse_itinerary(content)
-    return {"days": days} if days else {"text": content.strip()}
+    days, truncated = parse_itinerary(content)
+    if days:
+        finish_reason = (data["choices"][0].get("finish_reason") or "").lower()
+        return {"days": days, "truncated": truncated or finish_reason == "length"}
+    if content.lstrip("` \n").lower().startswith(("{", "json")):
+        raise ItineraryError("The model's reply was cut off or malformed -- try again")
+    return {"text": content.strip()}
