@@ -168,6 +168,19 @@ dd { margin: 0; font-size: 0.95rem; }
 
 .tz-note { text-transform: none; letter-spacing: 0; }
 
+.daily-hl { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.daily-hl .day {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.daily-hl .day.partial { border-style: dashed; }
+.daily-hl .day-name { color: var(--muted); }
+.daily-hl .high { color: var(--danger); font-weight: 600; }
+.daily-hl .low { color: #1e3a8a; font-weight: 600; }
+
 .chart-card + .chart-card { margin-top: 1.5rem; }
 
 .alert-flag { color: var(--danger); font-weight: 600; }
@@ -178,4 +191,6 @@ dd { margin: 0; font-size: 0.95rem; }
   .suggestions li[aria-selected="true"], .suggestions li:hover { background: #1f2430; }
   #city-list li:hover { background: #1f2430; }
   .empty-state { border-color: #262b38; }
+  .daily-hl .day { border-color: #262b38; }
+  .daily-hl .low { color: #93c5fd; }
 }

@@ -186,7 +186,71 @@ function renderCharts() {
 function renderHistoryChart() {
   el("chart-title").textContent = SERIES[state.series].label;
   el("history-tz").textContent = timeZoneNote();
-  drawChart("history-chart", state.history.map((r) => ({ at: r.pulled_at, value: r[state.series] })));
+  const points = state.history.map((r) => ({ at: r.pulled_at, value: r[state.series] }));
+  drawChart("history-chart", points);
+  renderDailyHighLow("history-hl", points);
+}
+
+// --- Daily high / low (temperature tab) ---
+
+const HIGH_COLOR = "#dc2626";
+const LOW_COLOR = "#1e3a8a";
+
+// Local calendar day ("YYYY-MM-DD") and hour (0-23) of `iso` in the city's timezone.
+// formatToParts keeps this independent of the viewer's locale date format.
+function cityDayAndHour(iso) {
+  const opts = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" };
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat("en-US", { ...opts, timeZone: cityTimeZone() }).formatToParts(new Date(iso));
+  } catch {
+    parts = new Intl.DateTimeFormat("en-US", opts).formatToParts(new Date(iso)); // unknown zone name
+  }
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return { day: `${get("year")}-${get("month")}-${get("day")}`, hour: Number(get("hour")) };
+}
+
+// Groups points by local day; each day gets the index of its highest and lowest reading.
+// A day is "partial" when the data doesn't cover it from ~midnight to ~11 PM, e.g. the
+// forecast's first day starts at the pull time, so its high/low may not be the real one.
+function dailyHighLow(points) {
+  const days = [];
+  let current = null;
+  points.forEach((p, i) => {
+    if (p.value === null || p.value === undefined) return;
+    const key = cityDayAndHour(p.at).day;
+    if (!current || current.key !== key) {
+      current = { key, at: p.at, first: p.at, last: p.at, high: i, low: i };
+      days.push(current);
+    }
+    current.last = p.at;
+    if (p.value > points[current.high].value) current.high = i;
+    if (p.value < points[current.low].value) current.low = i;
+  });
+  const hour = (iso) => cityDayAndHour(iso).hour;
+  days.forEach((d) => { d.partial = hour(d.first) > 1 || hour(d.last) < 22; });
+  return days;
+}
+
+function renderDailyHighLow(containerId, points) {
+  const box = el(containerId);
+  box.innerHTML = "";
+  const show = state.series === "temperature" && points.length > 0;
+  box.classList.toggle("hidden", !show);
+  if (!show) return;
+
+  const cfg = SERIES.temperature;
+  dailyHighLow(points).forEach((d) => {
+    const chip = document.createElement("div");
+    chip.className = `day${d.partial ? " partial" : ""}`;
+    if (d.partial) chip.title = "Partial day: only some hours are covered, so the true high/low may differ.";
+    const name = formatCityTime(d.at, { weekday: "short", month: "numeric", day: "numeric" });
+    chip.innerHTML =
+      `<div class="day-name">${name}${d.partial ? " (partial)" : ""}</div>` +
+      `<span class="high">H ${fmt(cfg, points[d.high].value)}</span> · ` +
+      `<span class="low">L ${fmt(cfg, points[d.low].value)}</span>`;
+    box.appendChild(chip);
+  });
 }
 
 function renderForecastChart() {
@@ -200,7 +264,9 @@ function renderForecastChart() {
     delete state.charts["forecast-chart"];
     return;
   }
-  drawChart("forecast-chart", state.forecast.map((r) => ({ at: r.time, value: r[state.series] })), { dashed: true });
+  const points = state.forecast.map((r) => ({ at: r.time, value: r[state.series] }));
+  drawChart("forecast-chart", points, { dashed: true });
+  renderDailyHighLow("forecast-hl", points);
 }
 
 // Draws the selected series into `canvasId`. `points` is [{at: ISO time, value}].
@@ -211,6 +277,23 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
   // null (pre-migration rows) leaves a gap in the chart rather than plotting 0.
   const values = points.map((p) => (p.value === null ? null : cfg.value(p.value)));
   const unit = cfg.unit().trim();
+
+  // On the temperature tab, mark each day's high (red) and low (blue) on the line.
+  const marks = {};
+  if (state.series === "temperature") {
+    dailyHighLow(points).forEach((d) => {
+      marks[d.high] = { color: HIGH_COLOR, text: "Daily high" };
+      marks[d.low] = { color: LOW_COLOR, text: "Daily low" };
+    });
+  }
+  const baseRadius = dashed ? 2 : 3;
+  const markStyle = state.series === "temperature"
+    ? {
+        pointRadius: values.map((_, i) => (marks[i] ? 6 : baseRadius)),
+        pointBackgroundColor: values.map((_, i) => marks[i]?.color ?? cfg.color),
+        pointBorderColor: values.map((_, i) => (marks[i] ? "#fff" : cfg.color)),
+      }
+    : {};
 
   state.charts[canvasId]?.destroy();
   state.charts[canvasId] = new Chart(ctx, {
@@ -231,15 +314,19 @@ function drawChart(canvasId, points, { dashed = false } = {}) {
           : {
               backgroundColor: `${cfg.color}33`,
               tension: 0.25,
-              pointRadius: dashed ? 2 : 3,
+              pointRadius: baseRadius,
               fill: true,
               borderDash: dashed ? [6, 4] : [],
+              ...markStyle,
             }),
       }],
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { afterLabel: (item) => marks[item.dataIndex]?.text ?? "" } },
+      },
       scales: { y: { beginAtZero: state.series !== "temperature", title: { display: true, text: unit } } },
     },
   });
