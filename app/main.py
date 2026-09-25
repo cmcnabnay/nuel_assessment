@@ -85,6 +85,7 @@ def _build_latest_payload(conn, city_row, status="ok", error=None):
             "country": city_row["country"],
             "latitude": city_row["latitude"],
             "longitude": city_row["longitude"],
+            "timezone": city_row["timezone"],
         },
         "snapshot": {
             "pulled_at": latest_snap["pulled_at"],

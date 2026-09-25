@@ -51,6 +51,7 @@ def test_pull_then_latest_and_history(client, monkeypatch):
     assert body["metrics"]["series"]["temperature"]["change_since_last_pull"] is None  # only one pull so far
     assert body["snapshot"]["humidity"] == 60.0
     assert body["status"] == "ok"
+    assert body["city"]["timezone"] == "Europe/Paris"
 
     monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(23.0))
     second = client.post("/api/pull", params={"city": "Paris"})

@@ -76,6 +76,29 @@ const SERIES = {
   humidity: { label: "Humidity", unit: () => "%", value: identity, delta: identity, chart: "line", color: "#059669" },
 };
 
+// Times are stored in UTC; show them in the selected city's own timezone so a
+// forecast for Tokyo reads in Tokyo time regardless of where the viewer is.
+// "auto" (geocoder gave no zone) falls back to the browser's timezone.
+function cityTimeZone() {
+  const tz = state.lastPayload?.city.timezone;
+  return tz && tz !== "auto" ? tz : undefined;
+}
+
+function formatCityTime(iso, options = {}) {
+  try {
+    return new Date(iso).toLocaleString(undefined, { timeZone: cityTimeZone(), ...options });
+  } catch {
+    return new Date(iso).toLocaleString(undefined, options); // unknown zone name
+  }
+}
+
+function timeZoneNote() {
+  const tz = cityTimeZone();
+  if (!tz) return "(your local time)";
+  const abbr = formatCityTime(new Date().toISOString(), { timeZoneName: "short" }).split(" ").pop();
+  return `(${tz.replace(/_/g, " ")} time, ${abbr})`;
+}
+
 function fmt(cfg, v) {
   return v === null || v === undefined ? "n/a" : `${cfg.value(v)}${cfg.unit()}`;
 }
@@ -97,7 +120,7 @@ function renderLatest(payload) {
 
   el("city-name").textContent = payload.city.display_name + (payload.city.country ? `, ${payload.city.country}` : "");
   el("weather-desc").textContent = weatherDescription(payload.snapshot.weathercode);
-  el("pulled-at").textContent = new Date(payload.snapshot.pulled_at).toLocaleString();
+  el("pulled-at").textContent = formatCityTime(payload.snapshot.pulled_at, { timeZoneName: "short" });
   el("metric-count").textContent = payload.metrics.pull_count;
   renderSeries();
 
@@ -162,12 +185,14 @@ function renderCharts() {
 
 function renderHistoryChart() {
   el("chart-title").textContent = SERIES[state.series].label;
+  el("history-tz").textContent = timeZoneNote();
   drawChart("history-chart", state.history.map((r) => ({ at: r.pulled_at, value: r[state.series] })));
 }
 
 function renderForecastChart() {
   const empty = state.forecast.length === 0;
   el("forecast-title").textContent = SERIES[state.series].label;
+  el("forecast-tz").textContent = timeZoneNote();
   el("forecast-chart").classList.toggle("hidden", empty);
   el("forecast-empty").classList.toggle("hidden", !empty);
   if (empty) {
@@ -182,7 +207,7 @@ function renderForecastChart() {
 function drawChart(canvasId, points, { dashed = false } = {}) {
   const cfg = SERIES[state.series];
   const ctx = el(canvasId).getContext("2d");
-  const labels = points.map((p) => new Date(p.at).toLocaleString());
+  const labels = points.map((p) => formatCityTime(p.at));
   // null (pre-migration rows) leaves a gap in the chart rather than plotting 0.
   const values = points.map((p) => (p.value === null ? null : cfg.value(p.value)));
   const unit = cfg.unit().trim();

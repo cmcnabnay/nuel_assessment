@@ -166,6 +166,8 @@ dd { margin: 0; font-size: 0.95rem; }
   padding: 1rem;
 }
 
+.tz-note { text-transform: none; letter-spacing: 0; }
+
 .chart-card + .chart-card { margin-top: 1.5rem; }
 
 .alert-flag { color: var(--danger); font-weight: 600; }
