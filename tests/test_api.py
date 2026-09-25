@@ -161,3 +161,34 @@ def test_pull_with_location_id_uses_exact_match(client, monkeypatch):
     body = client.post("/api/pull", params={"city": "Paris, Texas", "location_id": 4717560}).json()
     assert body["city"]["country"] == "United States"
     assert body["city"]["query_name"] == "Paris, Texas"
+
+
+def test_forecast_returns_hours_from_latest_pull_onward(client, monkeypatch):
+    from app import pull as pull_mod
+
+    def weather_with_hourly(lat, lon, tz):
+        w = make_weather(20.0)
+        w["hourly"] = [
+            {"time": "2000-01-01T00:00:00.000000+00:00", "temperature": 1.0, "humidity": 50,
+             "precipitation": 0.0, "windspeed": 3.0, "weathercode": 0},
+            {"time": "2999-01-01T00:00:00.000000+00:00", "temperature": 25.0, "humidity": 40,
+             "precipitation": 1.5, "windspeed": 9.0, "weathercode": 61},
+        ]
+        return w
+
+    monkeypatch.setattr(pull_mod, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_mod, "fetch_weather", weather_with_hourly)
+    client.post("/api/pull", params={"city": "Paris"})
+
+    resp = client.get("/api/forecast", params={"city": "Paris"})
+    assert resp.status_code == 200
+    assert resp.json() == [{"time": "2999-01-01T00:00:00.000000+00:00", "temperature": 25.0,
+                            "precipitation": 1.5, "windspeed": 9.0, "humidity": 40}]
+
+
+def test_forecast_is_empty_when_no_pull_stored_one(client, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(20.0))
+    client.post("/api/pull", params={"city": "Paris"})
+
+    assert client.get("/api/forecast", params={"city": "Paris"}).json() == []

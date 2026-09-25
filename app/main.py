@@ -188,6 +188,38 @@ def history(
         conn.close()
 
 
+@app.get("/api/forecast")
+def forecast(city: str = Query(..., min_length=1)):
+    """Hourly forecast stored with the most recent live pull, from that pull onward.
+    Like /api/history this only reads the DB; a refresh (POST /api/pull) updates it."""
+    conn = db_module.get_connection()
+    try:
+        row = _get_city_row(conn, city)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"'{city}' has not been pulled yet.")
+
+        snap = conn.execute(
+            """
+            SELECT pulled_at, forecast_hourly_json FROM snapshots
+            WHERE city_id = ? AND forecast_hourly_json IS NOT NULL
+            ORDER BY pulled_at DESC, id DESC LIMIT 1
+            """,
+            (row["id"],),
+        ).fetchone()
+        if not snap:
+            return []
+
+        # Keep the hour containing the pull so the forecast joins up with the history.
+        pull_hour = snap["pulled_at"][:13]
+        return [
+            {"time": h["time"], **{name: h[name] for name in SERIES}}
+            for h in json.loads(snap["forecast_hourly_json"])
+            if h["time"][:13] >= pull_hour
+        ]
+    finally:
+        conn.close()
+
+
 @app.get("/api/itinerary")
 def itinerary(city: str = Query(..., min_length=1)):
     """Suggest an itinerary from the most recently stored forecast. Reads from the

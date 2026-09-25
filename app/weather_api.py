@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import requests
 
 from .errors import CityNotFoundError, UpstreamError
@@ -6,6 +8,7 @@ GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 GEOCODE_BY_ID_URL = "https://geocoding-api.open-meteo.com/v1/get"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 TIMEOUT_SECONDS = 8
+HOURLY_VARIABLES = "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code"
 
 
 def _geocode_get(url, params):
@@ -63,7 +66,7 @@ def fetch_hourly_history(latitude, longitude, start_date, end_date):
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "hourly": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code",
+        "hourly": HOURLY_VARIABLES,
         "start_date": start_date,
         "end_date": end_date,
         "timezone": "UTC",
@@ -78,26 +81,35 @@ def fetch_hourly_history(latitude, longitude, start_date, end_date):
     if not hourly:
         raise UpstreamError("History response was missing 'hourly'")
 
-    return [
-        {
-            "time": t,
+    return _hourly_rows(hourly)
+
+
+def _hourly_rows(hourly, utc_offset_seconds=0):
+    """Flatten Open-Meteo's column-per-variable hourly block into one dict per hour.
+    `time` is converted to a UTC ISO string (same format as snapshots.pulled_at)."""
+    rows = []
+    for i, t in enumerate(hourly["time"]):
+        local = datetime.fromisoformat(t)
+        at = (local - timedelta(seconds=utc_offset_seconds)).replace(tzinfo=timezone.utc)
+        rows.append({
+            "time": at.isoformat(timespec="microseconds"),
             "temperature": hourly["temperature_2m"][i],
             "humidity": hourly["relative_humidity_2m"][i],
             "precipitation": hourly["precipitation"][i],
             "windspeed": hourly["wind_speed_10m"][i],
             "weathercode": hourly["weather_code"][i],
-        }
-        for i, t in enumerate(hourly["time"])
-    ]
+        })
+    return rows
 
 
 def fetch_weather(latitude, longitude, tz="auto"):
-    """Fetch current conditions plus a short daily forecast for a coordinate."""
+    """Fetch current conditions plus a short daily and hourly forecast for a coordinate."""
     params = {
         "latitude": latitude,
         "longitude": longitude,
         "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code",
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
+        "hourly": HOURLY_VARIABLES,
         "forecast_days": 3,
         "timezone": tz or "auto",
     }
@@ -119,4 +131,6 @@ def fetch_weather(latitude, longitude, tz="auto"):
         "precipitation": current.get("precipitation"),
         "weathercode": current.get("weather_code"),
         "daily": data.get("daily"),
+        # Hourly times come back in the city's timezone; _hourly_rows converts to UTC.
+        "hourly": _hourly_rows(data["hourly"], data.get("utc_offset_seconds", 0)) if data.get("hourly") else None,
     }

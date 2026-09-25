@@ -124,3 +124,20 @@ def test_geocode_by_id_maps_unknown_id_to_city_not_found(monkeypatch):
     monkeypatch.setattr(weather_api.requests, "get", lambda *a, **k: Resp())
     with pytest.raises(CityNotFoundError):
         weather_api.geocode_by_id(999999999)
+
+
+def test_hourly_rows_convert_local_times_to_utc():
+    from app.weather_api import _hourly_rows
+
+    hourly = {
+        "time": ["2026-09-24T19:00"],
+        "temperature_2m": [20.0],
+        "relative_humidity_2m": [55],
+        "precipitation": [0.2],
+        "wind_speed_10m": [7.0],
+        "weather_code": [3],
+    }
+    # Houston in September is UTC-5.
+    (row,) = _hourly_rows(hourly, utc_offset_seconds=-5 * 3600)
+    assert row["time"] == "2026-09-25T00:00:00.000000+00:00"
+    assert row["humidity"] == 55

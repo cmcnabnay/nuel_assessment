@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     precipitation REAL,
     weathercode INTEGER,
     forecast_json TEXT,
+    forecast_hourly_json TEXT,
     source TEXT NOT NULL DEFAULT 'live'
 );
 
@@ -38,6 +39,8 @@ ADDED_SNAPSHOT_COLUMNS = {
     "precipitation": "REAL",
     # 'live' for real pulls, 'backfill' for hourly history loaded by scripts/backfill.py.
     "source": "TEXT NOT NULL DEFAULT 'live'",
+    # Next ~3 days of hourly readings fetched with a live pull, for the forecast chart.
+    "forecast_hourly_json": "TEXT",
 }
 
 

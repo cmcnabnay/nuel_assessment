@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Weather Dashboard</title>
-<link rel="stylesheet" href="/static/style.css?v=7" />
+<link rel="stylesheet" href="/static/style.css?v=8" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -84,10 +84,16 @@
           <div class="card-label"><span id="chart-title">Temperature</span> history</div>
           <canvas id="history-chart" height="90"></canvas>
         </div>
+
+        <div class="chart-card">
+          <div class="card-label"><span id="forecast-title">Temperature</span> forecast</div>
+          <canvas id="forecast-chart" height="90"></canvas>
+          <div id="forecast-empty" class="muted hidden">No forecast stored yet. Refresh (pull now) to fetch one.</div>
+        </div>
       </div>
     </section>
   </main>
 
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

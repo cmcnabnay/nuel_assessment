@@ -10,9 +10,10 @@ const WEATHER_CODES = {
 
 const state = {
   currentCity: null,
-  chart: null,
+  charts: {},
   lastPayload: null,
   history: [],
+  forecast: [],
   unit: loadPref("unit", ["C", "F"]),
   series: loadPref("series", ["temperature", "precipitation", "windspeed", "humidity"]),
 };
@@ -113,9 +114,10 @@ function renderLatest(payload) {
 
   if (!isRerender) {
     loadHistory(payload.city.query_name);
+    loadForecast(payload.city.query_name);
     refreshCityList(payload.city.query_name);
   } else {
-    renderChart();
+    renderCharts();
   }
 }
 
@@ -141,20 +143,52 @@ function renderSeries() {
 
 async function loadHistory(city) {
   state.history = await api(`/api/history?city=${encodeURIComponent(city)}`);
-  renderChart();
+  renderHistoryChart();
 }
 
-function renderChart() {
+async function loadForecast(city) {
+  try {
+    state.forecast = await api(`/api/forecast?city=${encodeURIComponent(city)}`);
+  } catch {
+    state.forecast = [];
+  }
+  renderForecastChart();
+}
+
+function renderCharts() {
+  renderHistoryChart();
+  renderForecastChart();
+}
+
+function renderHistoryChart() {
+  el("chart-title").textContent = SERIES[state.series].label;
+  drawChart("history-chart", state.history.map((r) => ({ at: r.pulled_at, value: r[state.series] })));
+}
+
+function renderForecastChart() {
+  const empty = state.forecast.length === 0;
+  el("forecast-title").textContent = SERIES[state.series].label;
+  el("forecast-chart").classList.toggle("hidden", empty);
+  el("forecast-empty").classList.toggle("hidden", !empty);
+  if (empty) {
+    state.charts["forecast-chart"]?.destroy();
+    delete state.charts["forecast-chart"];
+    return;
+  }
+  drawChart("forecast-chart", state.forecast.map((r) => ({ at: r.time, value: r[state.series] })), { dashed: true });
+}
+
+// Draws the selected series into `canvasId`. `points` is [{at: ISO time, value}].
+function drawChart(canvasId, points, { dashed = false } = {}) {
   const cfg = SERIES[state.series];
-  const ctx = el("history-chart").getContext("2d");
-  const labels = state.history.map((r) => new Date(r.pulled_at).toLocaleString());
+  const ctx = el(canvasId).getContext("2d");
+  const labels = points.map((p) => new Date(p.at).toLocaleString());
   // null (pre-migration rows) leaves a gap in the chart rather than plotting 0.
-  const values = state.history.map((r) => (r[state.series] === null ? null : cfg.value(r[state.series])));
+  const values = points.map((p) => (p.value === null ? null : cfg.value(p.value)));
   const unit = cfg.unit().trim();
 
-  el("chart-title").textContent = cfg.label;
-  if (state.chart) state.chart.destroy();
-  state.chart = new Chart(ctx, {
+  state.charts[canvasId]?.destroy();
+  state.charts[canvasId] = new Chart(ctx, {
     type: cfg.chart,
     data: {
       labels,
@@ -169,7 +203,13 @@ function renderChart() {
               backgroundColor: cfg.color,
               barThickness: Math.max(6, Math.floor(ctx.canvas.parentElement.clientWidth / values.length)),
             }
-          : { backgroundColor: `${cfg.color}33`, tension: 0.25, pointRadius: 3, fill: true }),
+          : {
+              backgroundColor: `${cfg.color}33`,
+              tension: 0.25,
+              pointRadius: dashed ? 2 : 3,
+              fill: true,
+              borderDash: dashed ? [6, 4] : [],
+            }),
       }],
     },
     options: {
