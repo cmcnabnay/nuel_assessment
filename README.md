@@ -59,9 +59,7 @@ Weather data gets updated four ways:
 **Scheduled Pull**
 The scheduled pull uses a systemd user timer (`weather-pull.timer`, saved to my machine) 
 - Runs `scripts/pull_now.py` automatically every 15 minutes, re-pulling every currently tracked city and storing a fresh snapshot for each. 
-
 - Each pull inserts one new row into the `snapshots` table (temperature, windspeed, humidity, precipitation, weathercode, is_day, the daily and hourly forecast JSON, and the pull's timestamp), tagged `source='live'`. It doesn't touch the `cities` table, since the city was already added there the first time it was pulled or searched.
-
 - It also fires once 5 minutes after login/boot, `Persistent=true` means a missed run (e.g. when the machine was off) fires as soon as the user systemd session is back up. 
 
 - Check status: `systemctl --user status weather-pull.timer`
@@ -114,6 +112,50 @@ app/pull.py (pull_city())
 - Inserts a new row into the snapshots table with the fresh reading (temperature, windspeed, humidity, precipitation, weathercode, is_day) and the current timestamp, along with the updated daily and hourly forecast JSON
 - Commits, then returns the city row and the new pull's timestamp
 - Output: the dashboard's conditions, metrics, and charts now reflect the newly stored snapshot, and the city's pull history has one more row than before
+
+**Backfill Process**
+Backfill is the step that fills in a city's weather history for the days before it was ever pulled, by fetching Open-Meteo's archived hourly readings instead of just the current conditions. Without it, a city that was just added would show up with exactly one data point, so its chart would be a single dot and its metrics would all read "n/a (need 2+ pulls)". The moment a new city is pulled for the first time, the app automatically runs this to fetch and store the past week of hourly history too, so the chart and metrics look the same as they would for a city that's been tracked for a week.
+This is what happens when a new city is added (typed into the search bar, chosen from a suggestion, or added via `scripts/pull_now.py`):
+
+app/pull.py
+- pull_city()
+  - Input: conn, name, location_id
+  - Calls get_or_create_city(), which now returns (city, is_new) instead of just city -- is_new is True only when this call inserted a brand-new row into the cities table, False when the city was already tracked
+  - Calls fetch_weather() and inserts the live snapshot, exactly like any other pull (Refresh included)
+  - If is_new is True:
+    - Calls local_today(city) (backfill.py) to get today's date in the city's own timezone (not the server's), then subtracts BACKFILL_DAYS (7) to get the variable since
+    - Calls backfill_city(conn, city, since)
+    - Wraps that call in try/except UpstreamError: pass, so a failed backfill (e.g. Open-Meteo's history endpoint is down) doesn't fail the pull that already succeeded -- the city still ends up added with at least its live snapshot
+  - Output: city, pulled_at, same as before; as a side effect, a brand-new city now also has roughly a week of hourly history stored alongside its live snapshot
+
+app/backfill.py
+- backfill_city()
+  - Input: conn, city, since (a date), dry_run
+  - Reads the city's existing snapshot timestamps; right after a new city's first pull, that's exactly the one live row just committed
+  - Computes start, local midnight of since in the city's own timezone, with local_midnight_utc()
+  - Calls fetch_hourly_history() from weather_api.py for the UTC date range from start's date through the live pull's date
+  - For each hourly reading returned: skips it if the temperature is null, if it falls before start or at/after the live pull's timestamp, or if that hour is already covered by an existing snapshot
+  - Inserts one row per remaining hour into the snapshots table, tagged source='backfill', and commits
+  - Output: the number of rows inserted; the newest row for the city is always left as the live pull, since nothing is ever inserted at or after it
+
+app/weather_api.py
+- fetch_hourly_history()
+  - Input: latitude, longitude, start_date, end_date
+  - Calls Open-Meteo's forecast endpoint with the hourly parameter set (temperature, humidity, precipitation, wind speed, weather code) instead of the current/daily ones fetch_weather() uses
+  - Raises UpstreamError if the request fails or the response has no "hourly" block
+  - Output: one dict per hour in the range (in UTC), shaped like fetch_weather()'s current reading plus a time field
+
+**Database**
+The app stores everything in a single SQLite file `weather.db`,It has three tables:
+
+- **cities** -- one row per tracked city
+  - id, query_name (what the user typed or searched), display_name, country, latitude, longitude, timezone, created_at
+- **snapshots** -- one row per weather reading for a city, live or backfilled
+  - id, city_id (references cities), pulled_at, temperature, windspeed, humidity, precipitation, weathercode, is_day, forecast_json (the 3-day daily forecast), forecast_hourly_json (the next ~3 days hourly, for the forecast chart), source ('live' for a real pull, 'backfill' for hourly history filled in by app/backfill.py)
+  - Indexed on (city_id, pulled_at), since almost every query filters by city and orders by time
+- **saved_itineraries** -- one row per itinerary the user chose to keep
+  - id, city_id (references cities), saved_at, days_json (a structured itinerary) and text (the model's raw prose reply) -- exactly one of the two is set per row
+  - Indexed on (city_id, saved_at)
 
 **Itinerary**
 The Itinerary tab generates a travel itinerary for the selected city that takes into account the three day OpenMeteo forecast when the user clicks the "Suggest an itinerary" button
@@ -200,15 +242,14 @@ app/llm.py
   - Skips days with no events
   - Output: days, a list of cleaned days each with date, title, weather_note and events
 
-**Run the tests:**
+**Tests**
 
 ```bash
 pytest
 ```
 
 29 tests, all offline, covering the derived-metric
-math, the pull pipeline's success/failure paths, the API endpoints end to end,
-and the OpenRouter integration's error handling.
+math, the pull pipeline's success/failure paths, the API endpoints end to end, and the OpenRouter integration's error handling.
 
 ## File System
 
@@ -228,6 +269,10 @@ static/: Frontend
 - index.html: Frontend page for the dashboard, served by the FastAPI backend, defines a search form to lookup and track a city, a sidebar that lists tracked cities, a dashboard section with three cards, current conditions, derived metrics, and trip itinerary suggestion, and a temperature history chart
 - app.js: Client side logic that drives index.html, wires up the UI to the FastAPI backend's endpoints
 - style.css: Page styling
+
+scripts/: Command-line entry points for running the pipeline manually or scheduled
+- pull_now.py: Re-pulls every tracked city, or specific cities passed as arguments, storing a fresh snapshot for each
+- backfill.py: Loads hourly history for tracked cities from a given start date up to each city's latest pull, with --dry-run and --trim options
 
 test/: Automated tests
 - test_metrics.py: Unit tests for math functions in metrics.py
@@ -399,4 +444,6 @@ backfill.py
 __init__.py
 - Empty file
 - Its only purpose is to mark app/ as a regular Python package, which is what lets other modules use relative imports like "from .errors import UpstreamError" and lets the app be run as app.main (e.g. uvicorn app.main:app)
+
+## scripts/
 
