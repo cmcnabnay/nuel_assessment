@@ -137,31 +137,43 @@ def test_suggest_itinerary_wraps_malformed_response(monkeypatch):
         llm_module.suggest_itinerary("Paris", CURRENT, None)
 
 
-DAILY_3 = {"time": ["2026-09-25", "2026-09-26", "2026-09-27"], "temperature_2m_max": [20.0, 18.0, 19.0],
-           "temperature_2m_min": [7.0, 9.0, 10.0], "precipitation_sum": [0, 42, 21], "weathercode": [3, 65, 63]}
+DAILY_4 = {"time": ["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28"],
+           "temperature_2m_max": [20.0, 18.0, 19.0, 17.0], "temperature_2m_min": [7.0, 9.0, 10.0, 8.0],
+           "precipitation_sum": [0, 42, 21, 3], "weathercode": [3, 65, 63, 80]}
 
 
 def _boston(hour, minute=0, day=25):
     return datetime(2026, 9, day, hour, minute, tzinfo=ZoneInfo("America/New_York"))
 
 
+def _planned_days(prompt):
+    return [line.split(":")[0][2:] for line in prompt.splitlines() if line.startswith("- ")]
+
+
 def test_build_prompt_starts_tomorrow_late_in_the_evening():
-    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(23, 12))
-    assert "2026-09-25:" not in prompt
-    assert "Saturday 2026-09-26" in prompt and "Sunday 2026-09-27" in prompt
-    assert "is today" not in prompt
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_4, "America/New_York", now=_boston(21, 5))
+    assert _planned_days(prompt) == ["Saturday 2026-09-26", "Sunday 2026-09-27", "Monday 2026-09-28"]
+    assert "is today" not in prompt and "no forecast" not in prompt
+
+
+def test_build_prompt_plans_a_full_day_just_after_midnight():
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_4, "America/New_York", now=_boston(0, 5, day=26))
+    assert _planned_days(prompt) == ["Saturday 2026-09-26", "Sunday 2026-09-27", "Monday 2026-09-28"]
+    assert "is today" not in prompt and "starting with breakfast" in prompt
 
 
 def test_build_prompt_plans_rest_of_today_earlier_in_the_day():
-    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(15, 30))
-    assert "Friday 2026-09-25" in prompt
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_4, "America/New_York", now=_boston(15, 30))
+    assert _planned_days(prompt) == ["Friday 2026-09-25", "Saturday 2026-09-26", "Sunday 2026-09-27"]
     assert "Friday is today" in prompt and "03:30 PM" in prompt
 
 
 def test_build_prompt_skips_days_an_old_forecast_has_passed():
-    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(9, day=26))
-    assert "2026-09-25" not in prompt
-    assert "Saturday is today" in prompt
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_4, "America/New_York", now=_boston(9, day=27))
+    assert _planned_days(prompt) == ["Sunday 2026-09-27", "Monday 2026-09-28", "Tuesday 2026-09-29"]
+    assert "Sunday is today" in prompt
+    # The stored forecast ends on Monday, so Tuesday is planned without one.
+    assert prompt.count("no forecast available") == 1
 
 
 def test_parse_itinerary_drops_stops_that_run_past_midnight():

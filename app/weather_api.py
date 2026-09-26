@@ -102,6 +102,10 @@ def _hourly_rows(hourly, utc_offset_seconds=0):
     return rows
 
 
+# Hourly forecast kept for the chart: today plus the next two days.
+HOURLY_FORECAST_HOURS = 72
+
+
 def fetch_weather(latitude, longitude, tz="auto"):
     """Fetch current conditions plus a short daily and hourly forecast for a coordinate."""
     params = {
@@ -110,7 +114,9 @@ def fetch_weather(latitude, longitude, tz="auto"):
         "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code,is_day",
         "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode",
         "hourly": HOURLY_VARIABLES,
-        "forecast_days": 3,
+        # One day more than the hourly chart shows, so an itinerary made late in the
+        # evening (which starts tomorrow) still has a forecast for all three of its days.
+        "forecast_days": 4,
         "timezone": tz or "auto",
     }
     try:
@@ -133,5 +139,6 @@ def fetch_weather(latitude, longitude, tz="auto"):
         "is_day": current.get("is_day"),
         "daily": data.get("daily"),
         # Hourly times come back in the city's timezone; _hourly_rows converts to UTC.
-        "hourly": _hourly_rows(data["hourly"], data.get("utc_offset_seconds", 0)) if data.get("hourly") else None,
+        "hourly": _hourly_rows(data["hourly"], data.get("utc_offset_seconds", 0))[:HOURLY_FORECAST_HOURS]
+        if data.get("hourly") else None,
     }

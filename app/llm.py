@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -64,8 +64,11 @@ def _local_now(tz_name):
         return None
 
 
+ITINERARY_DAYS = 3
 # From this local hour on, today is too far gone to plan: the itinerary starts tomorrow.
-LATE_START_HOUR = 20
+LATE_START_HOUR = 21
+# Before this local hour (just past midnight), today is planned as a full day from morning.
+EARLY_MORNING_HOUR = 6
 
 
 def build_prompt(city_display_name, current, daily, tz_name=None, now=None):
@@ -78,34 +81,40 @@ def build_prompt(city_display_name, current, daily, tz_name=None, now=None):
         f"wind {current['windspeed']} km/h."
     )
 
-    days = list(enumerate(daily["time"])) if daily and daily.get("time") else []
-    if now:
-        # A stored forecast can be a day or more old; drop the days that are over, and
-        # today too once it's late in the evening.
-        today = now.date().isoformat()
-        late = now.hour >= LATE_START_HOUR
-        days = [(i, d) for i, d in days if d > today or (d == today and not late)]
-
-    if days:
-        lines.append("Days to plan, with their forecast:")
-        for i, day in days:
-            weekday = date.fromisoformat(day).strftime("%A")
-            lines.append(
-                f"- {weekday} {day}: high {_c_and_f(daily['temperature_2m_max'][i])}, "
+    forecast = {}
+    if daily and daily.get("time"):
+        for i, day in enumerate(daily["time"]):
+            forecast[day] = (
+                f"high {_c_and_f(daily['temperature_2m_max'][i])}, "
                 f"low {_c_and_f(daily['temperature_2m_min'][i])}, "
                 f"precipitation {daily['precipitation_sum'][i]} mm, {_describe(daily['weathercode'][i])}"
             )
-        first = days[0][1]
-        if now and first == now.date().isoformat():
-            lines.append(
-                f"{date.fromisoformat(first).strftime('%A')} is today: plan only what fits between now "
-                f"({now.strftime('%I:%M %p')}) and about 10 PM, even if that is just one or two stops. "
-                "The other days run from morning to evening as usual."
-            )
-        else:
-            lines.append("Each day runs from morning to evening.")
-    elif daily and daily.get("time"):
-        lines.append("The stored forecast has no days left; plan one day starting tomorrow morning.")
+
+    # Always plan ITINERARY_DAYS days: the rest of today (or all of it, just past
+    # midnight) and the next two, or from tomorrow once it's late in the evening.
+    if now:
+        today = now.date()
+    elif forecast:
+        today = date.fromisoformat(min(forecast))
+    else:
+        today = date.today()
+    partial_today = bool(now) and EARLY_MORNING_HOUR <= now.hour < LATE_START_HOUR
+    first = today + timedelta(days=1) if now and now.hour >= LATE_START_HOUR else today
+    days = [first + timedelta(days=n) for n in range(ITINERARY_DAYS)]
+
+    lines.append("Days to plan, with their forecast:")
+    for d in days:
+        weather = forecast.get(d.isoformat(), "no forecast available, assume typical weather for the season")
+        lines.append(f"- {d.strftime('%A')} {d.isoformat()}: {weather}")
+
+    if partial_today:
+        lines.append(
+            f"{today.strftime('%A')} is today: plan only what fits between now "
+            f"({now.strftime('%I:%M %p')}) and about 10 PM, even if that is just one or two stops. "
+            "The other days run from morning to evening as usual."
+        )
+    else:
+        lines.append("Each day runs from morning to evening, starting with breakfast.")
     return "\n".join(lines)
 
 
