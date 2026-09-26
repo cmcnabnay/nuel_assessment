@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -30,13 +30,16 @@ SYSTEM_PROMPT = f"""You are an expert local travel planner. Plan a detailed itin
 Rules:
 - Name specific, real places: the actual museum, the actual restaurant, the actual park or
   venue, with its neighborhood. Never write generic entries like "a local cafe".
-- Each day runs from morning to evening with 5 to 7 timed stops, including breakfast or
+- Each full day runs from morning to evening with 5 to 7 timed stops, including breakfast or
   coffee, lunch and dinner at named restaurants.
 - Fit the plan to that day's weather: indoor stops for rain, storms or extreme heat or cold,
   outdoor stops for good weather.
 - Only include a sports game, concert or other scheduled event if the venue really hosts
   them; say "check the schedule" in its details.
-- Day 1 is today. Start it after the current local time given below.
+- Plan exactly the days listed in the request, in order. The first one may be only part of a
+  day: follow the instruction given for it about when to start.
+- Within each day, list stops in time order. Every stop happens on that calendar day;
+  never schedule anything after midnight.
 - No summary, no key takeaways, no closing remarks, no markdown.
 
 Reply with only a JSON object, no other text, in exactly this shape:
@@ -61,25 +64,48 @@ def _local_now(tz_name):
         return None
 
 
-def build_prompt(city_display_name, current, daily, tz_name=None):
+# From this local hour on, today is too far gone to plan: the itinerary starts tomorrow.
+LATE_START_HOUR = 20
+
+
+def build_prompt(city_display_name, current, daily, tz_name=None, now=None):
     lines = [f"City: {city_display_name}"]
-    now = _local_now(tz_name)
+    now = now or _local_now(tz_name)
     if now:
         lines.append(f"Current local time: {now.strftime('%A %Y-%m-%d, %I:%M %p')} ({tz_name})")
     lines.append(
         f"Current weather: {_c_and_f(current['temperature'])}, {_describe(current['weathercode'])}, "
         f"wind {current['windspeed']} km/h."
     )
-    if daily and daily.get("time"):
-        lines.append("Daily forecast:")
-        for i, day in enumerate(daily["time"]):
+
+    days = list(enumerate(daily["time"])) if daily and daily.get("time") else []
+    if now:
+        # A stored forecast can be a day or more old; drop the days that are over, and
+        # today too once it's late in the evening.
+        today = now.date().isoformat()
+        late = now.hour >= LATE_START_HOUR
+        days = [(i, d) for i, d in days if d > today or (d == today and not late)]
+
+    if days:
+        lines.append("Days to plan, with their forecast:")
+        for i, day in days:
             weekday = date.fromisoformat(day).strftime("%A")
             lines.append(
                 f"- {weekday} {day}: high {_c_and_f(daily['temperature_2m_max'][i])}, "
                 f"low {_c_and_f(daily['temperature_2m_min'][i])}, "
                 f"precipitation {daily['precipitation_sum'][i]} mm, {_describe(daily['weathercode'][i])}"
             )
-    lines.append("Plan one day per forecast day.")
+        first = days[0][1]
+        if now and first == now.date().isoformat():
+            lines.append(
+                f"{date.fromisoformat(first).strftime('%A')} is today: plan only what fits between now "
+                f"({now.strftime('%I:%M %p')}) and about 10 PM, even if that is just one or two stops. "
+                "The other days run from morning to evening as usual."
+            )
+        else:
+            lines.append("Each day runs from morning to evening.")
+    elif daily and daily.get("time"):
+        lines.append("The stored forecast has no days left; plan one day starting tomorrow morning.")
     return "\n".join(lines)
 
 
@@ -147,7 +173,34 @@ def parse_itinerary(content):
     if data is None:
         return None, False
     days = normalize_days(data.get("days") if isinstance(data, dict) else None)
+    days = [d for d in (_drop_out_of_order(d) for d in days) if d["events"]]
     return (days, truncated) if days else (None, False)
+
+
+def _parse_clock(text):
+    """'9:00 AM' / '9 AM' / '21:30' -> datetime.time, or None if it isn't a clock time."""
+    text = text.strip().upper().replace(".", "")
+    for fmt in ("%I:%M %p", "%I %p", "%I:%M%p", "%I%p", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            pass
+    return None
+
+
+def _drop_out_of_order(day):
+    """Keep a day's stops only up to the first one whose time goes backwards (a model
+    running past midnight into the next morning); stops without a parseable time are
+    kept as they are."""
+    kept, last = [], time.min
+    for event in day["events"]:
+        t = _parse_clock(event["time"])
+        if t is not None:
+            if t < last:
+                break
+            last = t
+        kept.append(event)
+    return {**day, "events": kept}
 
 
 def normalize_days(raw_days):

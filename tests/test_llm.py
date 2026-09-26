@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 import requests
 
@@ -108,7 +111,8 @@ def test_unusable_json_reply_raises_instead_of_showing_raw_json(monkeypatch):
 def test_build_prompt_describes_weather_in_words_and_both_units():
     daily = {"time": ["2026-09-25"], "temperature_2m_max": [30.0], "temperature_2m_min": [20.0],
              "precipitation_sum": [4.2], "weathercode": [63]}
-    prompt = llm_module.build_prompt("Houston", CURRENT, daily, "America/Chicago")
+    now = datetime(2026, 9, 25, 9, 0, tzinfo=ZoneInfo("America/Chicago"))
+    prompt = llm_module.build_prompt("Houston", CURRENT, daily, "America/Chicago", now=now)
     assert "Friday 2026-09-25" in prompt
     assert "high 30.0°C / 86.0°F" in prompt
     assert "rain" in prompt and "code 63" not in prompt
@@ -131,3 +135,44 @@ def test_suggest_itinerary_wraps_malformed_response(monkeypatch):
     monkeypatch.setattr(llm_module.requests, "post", lambda *a, **k: FakeResponse({"choices": []}))
     with pytest.raises(ItineraryError, match="Unexpected response shape"):
         llm_module.suggest_itinerary("Paris", CURRENT, None)
+
+
+DAILY_3 = {"time": ["2026-09-25", "2026-09-26", "2026-09-27"], "temperature_2m_max": [20.0, 18.0, 19.0],
+           "temperature_2m_min": [7.0, 9.0, 10.0], "precipitation_sum": [0, 42, 21], "weathercode": [3, 65, 63]}
+
+
+def _boston(hour, minute=0, day=25):
+    return datetime(2026, 9, day, hour, minute, tzinfo=ZoneInfo("America/New_York"))
+
+
+def test_build_prompt_starts_tomorrow_late_in_the_evening():
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(23, 12))
+    assert "2026-09-25:" not in prompt
+    assert "Saturday 2026-09-26" in prompt and "Sunday 2026-09-27" in prompt
+    assert "is today" not in prompt
+
+
+def test_build_prompt_plans_rest_of_today_earlier_in_the_day():
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(15, 30))
+    assert "Friday 2026-09-25" in prompt
+    assert "Friday is today" in prompt and "03:30 PM" in prompt
+
+
+def test_build_prompt_skips_days_an_old_forecast_has_passed():
+    prompt = llm_module.build_prompt("Boston", CURRENT, DAILY_3, "America/New_York", now=_boston(9, day=26))
+    assert "2026-09-25" not in prompt
+    assert "Saturday is today" in prompt
+
+
+def test_parse_itinerary_drops_stops_that_run_past_midnight():
+    reply = """{"days": [{"date": "2026-09-25", "title": "Late start", "events": [
+        {"time": "11:30 PM", "title": "Late dinner", "place": "Toro"},
+        {"time": "1:00 AM", "title": "River walk", "place": "Esplanade"},
+        {"time": "8:00 AM", "title": "Breakfast", "place": "Paramount"}]},
+      {"date": "2026-09-26", "title": "Rainy day", "events": [
+        {"time": "9:00 AM", "title": "Breakfast", "place": "Flour"},
+        {"time": "", "title": "Wander", "place": "Newbury St"},
+        {"time": "7:30 PM", "title": "Comedy", "place": "ImprovBoston"}]}]}"""
+    days, _ = llm_module.parse_itinerary(reply)
+    assert [e["title"] for e in days[0]["events"]] == ["Late dinner"]
+    assert [e["title"] for e in days[1]["events"]] == ["Breakfast", "Wander", "Comedy"]

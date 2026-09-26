@@ -446,4 +446,166 @@ __init__.py
 - Its only purpose is to mark app/ as a regular Python package, which is what lets other modules use relative imports like "from .errors import UpstreamError" and lets the app be run as app.main (e.g. uvicorn app.main:app)
 
 ## scripts/
+pull_now.py
+- Adds the project root to sys.path so `app` is importable when the file is run directly (not as a package), then imports db_module, CityNotFoundError, UpstreamError, and pull_city
+- main()
+  - Calls db_module.init_db(), opens a connection
+  - Builds names: the command-line arguments if any were given, otherwise every query_name already in the cities table; if there are none of either, prints a usage message and returns
+  - For each name, calls pull_city(conn, name)
+    - On success, prints "Pulled {display_name} at {pulled_at}"
+    - If it raises CityNotFoundError, prints "Skipping '{name}': {error}" and moves on to the next name
+    - If it raises UpstreamError, prints "Pull failed for '{name}' (leaving prior history intact): {error}" and moves on
+  - Closes conn in a finally block
+  - Run via `if __name__ == "__main__"`, so it does nothing when imported
+- This is the exact script the systemd timer runs on a schedule (see **Scheduled Pull**), and since pull_city() now backfills any brand-new city's first week of history, adding a never-seen city through this script gets backfilled the same as adding one through the search bar
+
+backfill.py
+- Same sys.path setup as pull_now.py, then imports db_module, backfill_city, trim_backfill_before, and UpstreamError
+- main()
+  - Splits sys.argv into the --dry-run / --trim flags and the remaining positional arguments
+  - If there are no positional arguments, prints the module's own docstring (usage) and returns
+  - Parses the first argument as since, an ISO date; the rest are city names
+  - Calls db_module.init_db(), opens a connection
+  - Looks up cities: a case-insensitive match against the given names if any were passed, otherwise every row in the cities table
+  - For each city:
+    - Calls backfill_city(conn, city, since, dry_run=dry_run)
+    - If it raises UpstreamError, prints "Skipping {city}: {error}" and continues to the next city
+    - Adds the returned count to a running total, and builds a message like "{city}: {n} hourly rows added"
+    - If --trim was passed, also calls trim_backfill_before(conn, city, since, dry_run=dry_run) and appends its count to the same message
+    - Prints the message
+  - Prints a final "Total: {n}" line, noting when it was a dry run
+  - Closes conn in a finally block
+- Lets a user manually backfill further back, re-run a backfill, or clean up backfilled rows before a date -- the automatic backfill in pull_city() only ever covers the last 7 days for a brand-new city
+
+## static/
+index.html
+- Head: sets the page title, preconnects to and loads the Inter font from Google Fonts, links style.css, and loads Chart.js from a CDN
+- Header: the brand mark (#brand-icon, filled in by app.js on load), the search form (#city-input plus its #suggestions dropdown for search-as-you-type), a °C/°F toggle (#unit-toggle), and a km/h/mph toggle (#wind-toggle, hidden until the wind speed tab is active)
+- Sidebar: #city-list, the tracked-cities list app.js's refreshCityList() fills in, each entry with a remove (×) button
+- Content section
+  - #tabs: five tab buttons (temperature, precipitation, windspeed, humidity, itinerary), hidden until a city is loaded
+  - #banner: shown for stale-data or error messages
+  - #empty-state: shown before any city has been picked
+  - #dashboard (hidden until a city is loaded)
+    - .status-bar: the last-pulled time (#pulled-at), pull count (#metric-count), and #refresh-btn
+    - .conditions card: city name (#city-name), weather description (#weather-desc), local time (#local-time), and the condition icon (#condition-icon)
+    - #metric-panel: a current-value card (#series-name, #series-current), a metrics card with three base-picker buttons (change/average/min-max, each opening the #pull-picker popup) and their values (#metric-change, #metric-avg, #metric-minmax), and two chart cards (#history-chart, #forecast-chart), each with a title, a timezone note, and a daily high/low chip row (#history-hl / #forecast-hl)
+    - #itinerary-panel (hidden until the Itinerary tab is selected): a header with the city name (#itinerary-city) and the Save/Suggest buttons, a status line (#itinerary-status), the itinerary content area (#itinerary-content), and the saved-itineraries list (#saved-list, #saved-empty)
+- #pull-picker: the pop-up calendar dialog; empty in the markup, positioned and filled entirely by app.js
+- Loads app.js last, with a `?v=` query string on both it and style.css used as a manual cache-buster when either file changes
+
+app.js
+- Constants and shared state
+  - WEATHER_CODES: maps Open-Meteo weather codes to readable descriptions
+  - state: the single mutable object holding the current city, active Chart.js instances, the last payload from the server, the loaded history/forecast rows, the user's chosen baseline pull for each metric, the saved unit/wind-unit/series preferences (via loadPref()), and the active tab
+  - el(id): shorthand for document.getElementById
+- api(path, options)
+  - Calls fetch(), parses the JSON body
+  - Throws an Error using the backend's detail/error message if the response wasn't ok
+  - Otherwise returns the parsed body
+- showBanner() / hideBanner(): show or hide the status banner
+- weatherDescription(code): looks up a weather code in WEATHER_CODES, falling back to "Weather code N"
+- Sets Chart.js's default colors and font once, to match the page's dark theme
+- Weather icons and sky
+  - conditionGroup(code): buckets a WMO weather code into one of eight groups (clear, partly, cloudy, fog, drizzle, rain, snow, storm)
+  - ICON_PARTS: small functions, one per icon piece (sun, moon, cloud, rain, drizzle, snow, bolt, fog), each returning a snippet of inline SVG
+  - weatherIcon(group, isDay): composes the right ICON_PARTS pieces for a condition group, using a sun or moon depending on isDay
+  - isDaytime(snapshot): reads the snapshot's is_day field when present, else falls back to the city's local hour (6 AM-7 PM counts as day) for snapshots pulled before is_day was recorded
+  - renderConditionVisuals(snapshot): sets the page's sky-* body class and fills #condition-icon from weatherIcon()
+  - dominantGroup(readings): the most common condition group across a day's daytime readings (8 AM-8 PM local), used for a daily high/low chip's icon
+- Preferences
+  - loadPref(key, allowed) / savePref(key, value): read or write a value in localStorage, constrained to an allowed list, wrapped in try/catch so a blocked or private-mode localStorage doesn't crash the page
+- Unit conversion
+  - round1(), toUnit(), deltaToUnit(), deg(): Celsius/Fahrenheit conversion for absolute readings and for differences (a difference skips the +32 offset)
+  - toWindUnit(), windUnitLabel(): km/h/mph conversion for wind speed
+  - identity(): a no-op converter for series that need no conversion (precipitation, humidity)
+  - SERIES: per-tab config (label, unit function, value/delta converters, chart type, color) that every chart- and metric-rendering function reads from
+- Time formatting
+  - cityTimeZone(): the selected city's IANA timezone from the last payload, or undefined if it's unset/"auto" (so the browser's own zone is used instead)
+  - formatCityTime(iso, options): formats an ISO timestamp in the city's timezone, falling back to the browser's if the zone name isn't recognized
+  - timeZoneNote(): a "(City/Zone time, ABBR)" or "(your local time)" string shown next to chart titles
+  - cityDayAndHour(iso): the local calendar day and hour of a timestamp in the city's timezone, used to group readings by day
+- fmt(cfg, v) / formatChange(cfg, change): format a raw value, or a change dict (arrow, sign, percent), using a SERIES config
+- renderLatest(payload)
+  - Input: payload, the dict returned by /api/pull or /api/latest
+  - Detects whether this is a re-render of the same payload object (e.g. after switching units) or a genuinely new pull
+  - Updates the city name, weather description, condition visuals, pulled-at time, and pull count, then calls renderSeries()
+  - Shows the stale-data banner if payload.status is "stale", otherwise hides it
+  - On a new payload: resets the itinerary panel, reloads saved itineraries, and calls loadHistory(), loadForecast(), and refreshCityList()
+  - On a re-render: just calls renderCharts() to redraw with the new unit or series
+  - Always updates the local-time clock
+- renderSeries(): fills in the current value and the three metrics for whichever tab is selected, using the server's numbers until history has finished loading, then switching to renderSelectedMetrics()
+- loadHistory(city): fetches /api/history into state.history, then calls populateBaseSelects(), renderSeries(), and renderHistoryChart()
+- User-selected baselines (the three base-picker buttons)
+  - populateBaseSelects(): resets each metric's chosen "since" pull to a default (the previous pull for change, ROLLING_WINDOW pulls back for average, the oldest for min/max) if the previous choice no longer applies, then relabels the buttons
+  - updatePickerLabels(): writes each base-picker button's label from state.bases
+- Pop-up calendar (the picker object and #pull-picker dialog)
+  - pullsByDay(): groups every pull except the latest by local day
+  - openPicker(btn) / closePicker(): show or hide the dialog for a given metric button
+  - positionPicker(): places the dialog under its button, clamped to stay on-screen
+  - renderPicker(): renders either the month calendar or a day's list of times, depending on picker.day
+  - calendarView(byDay, selected): builds the month grid, with days that have pulls clickable, previous/next navigation, and today/selected highlighting
+  - timesView(times, selected): builds the list of pull times for one selected day
+  - Click handler on #pull-picker: navigates months, opens a day, goes back to the calendar, or picks a time (storing it as the new baseline and closing the dialog)
+  - Click handlers on each .base-picker button, and document-level mousedown/keydown/resize listeners, to open/close the picker and keep it positioned
+- seriesValuesSince(since) / renderSelectedMetrics(cfg): compute change/average/min-max for the current series from the user's chosen baselines, entirely client-side from the already-loaded history, instead of the server's defaults
+- loadForecast(city): fetches /api/forecast (emptying the array on failure) and calls renderForecastChart()
+- renderCharts(): redraws both charts (used after a re-render, e.g. a unit switch)
+- Daily history window
+  - HISTORY_DAYS_BACK / historyStartDay(): the history chart always shows the last 7 local days through now
+  - renderHistoryChart(): filters state.history to that window, builds chart points, and calls drawChart() and renderDailyHighLow()
+- Daily high/low chips
+  - dailyHighLow(points): groups chart points by local day, finding each day's highest and lowest reading, and flags a day "partial" if its coverage doesn't span roughly midnight to 11 PM
+  - renderDailyHighLow(containerId, points): shown only on the temperature tab; renders one chip per day with its name, dominant condition icon, high, and low
+- renderForecastChart(): builds chart points from state.forecast and calls drawChart() and renderDailyHighLow(), or shows the "no forecast stored yet" empty state
+- drawChart(canvasId, points, opts)
+  - Builds full-time labels for tooltips and short weekday/hour ticks for the axis
+  - Converts values through the series' unit converter, leaving nulls as gaps rather than plotting 0
+  - Destroys any existing chart on that canvas, then creates a new line or bar chart styled from the series' color, sizing bars so an isolated reading (e.g. one rainy hour) stays visible
+- refreshCityList(activeCity): fetches /api/cities and rebuilds the sidebar list, each entry with a name, a remove (×) button, and a click handler to select that city
+- removeCity(c): confirms, then calls DELETE /api/cities; if the removed city was the one on screen, switches to another tracked city or back to the empty state, otherwise just refreshes the sidebar
+- selectCity(city) / pullCity(city, locationId): call /api/latest or POST /api/pull respectively and pass the result to renderLatest(), or the error to showBanner()
+- Search-as-you-type
+  - suggest: state for the current results, the highlighted index, a debounce timer, and a sequence counter (to discard stale responses)
+  - suggestionLabel(r): a "City, Region, Country" label for a suggestion
+  - hideSuggestions() / renderSuggestions(query): hide or rebuild the suggestions dropdown, including keyboard-selection highlighting
+  - fetchSuggestions(query): calls /api/search, guarded by the sequence counter so a slow earlier request can't overwrite a newer one
+  - chooseSuggestion(i): picks a suggestion and calls pullCity() with its exact location_id, so an ambiguous name (e.g. "Paris") resolves to the one the user actually picked
+  - Input listeners on #city-input: debounce typing into fetchSuggestions(), handle arrow keys/Enter/Escape for keyboard navigation, and hide the list on blur
+  - #search-form submit: calls pullCity() with the typed text and no location_id, so it geocodes to the top match
+- #refresh-btn click: re-pulls state.currentCity
+- Unit and wind-unit toggles
+  - setUnit(unit) / setWindUnit(unit): update state, save the preference, update the pressed button, and re-render if a city is loaded
+  - Click handlers wire each toggle's buttons to these; both are initialized once from the saved preference on load
+- setTab(tab): switches the active tab, shows the metrics or itinerary panel, shows the unit/wind toggles only on the tabs they apply to, closes the picker, and re-renders (so a chart hidden while its panel was hidden gets redrawn at a real size)
+  - Tab buttons are wired to this; the saved tab preference is restored on load
+- Itinerary tab
+  - escapeHtml(s): escapes HTML special characters before interpolating any model-provided text
+  - renderItineraryDays(days): builds the structured itinerary markup, one section per day with a formatted date, weather note, and a list of timed stops
+  - renderMarkdown(text): a fallback renderer for a prose reply that isn't structured JSON, converting basic markdown (headings, bullets, bold/italic) to HTML
+  - showItinerary(itinerary, note): fills #itinerary-content with either the structured days or the markdown fallback, plus a disclaimer
+  - showSaveButton(itinerary): shows or hides the Save button for a freshly generated, unsaved itinerary
+  - #itinerary-btn click: calls /api/itinerary, guards against the user switching cities while waiting, then calls showItinerary() and showSaveButton() (or shows an error in the status line)
+- Saved itineraries
+  - loadSavedItineraries(city): fetches /api/itineraries for the city (leaving the list empty on failure) and calls renderSavedList()
+  - savedSummary(s): a one-line summary of a saved itinerary (day titles, or "Text itinerary")
+  - renderSavedList(): rebuilds #saved-list with each saved itinerary's date, summary, and View/Delete buttons
+  - markViewing(id): highlights whichever saved itinerary is currently shown in the panel
+  - #itinerary-save-btn click: POSTs the unsaved itinerary to /api/itineraries and adds the result to the top of the saved list
+  - #saved-list click: View shows that saved itinerary in the panel; Delete confirms, then DELETEs it and removes it from the list (clearing the panel only if it was the one being viewed)
+- City's current local time
+  - updateLocalTime(): writes the city's current local time into #local-time; ticks every second via setInterval
+- On load: calls refreshCityList(null), then auto-selects the first tracked city if any exist, so a page refresh doesn't lose context; fills #brand-icon with a static "partly cloudy" icon
+
+style.css
+- No logic to trace, so this is organized by the file's own section comments rather than function by function:
+  - Sky backgrounds: one gradient class per weather-group/day-night pair (sky-clear-day, sky-rain-night, etc.), applied to <body> by renderConditionVisuals() in app.js
+  - Shared controls: buttons, inputs, and the empty-state message
+  - Segmented pill control: the shared look for the unit toggles and the tabs
+  - Header: the brand, the search box, and its suggestions dropdown
+  - Layout: the sidebar/content grid, including a rule that keeps the remove-city (×) button visible on touch devices
+  - Cards, the current-conditions hero, and the daily high/low chips
+  - Pull picker: the pop-up calendar dialog
+  - Itinerary: the itinerary panel and its markdown-fallback styling
+  - Narrow screens: two @media breakpoints (860px, 520px) that collapse the layout for tablet and phone widths
 
