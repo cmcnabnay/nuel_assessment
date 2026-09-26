@@ -38,6 +38,10 @@ def client(tmp_path, monkeypatch):
     from app.main import app  # imported after DB_PATH is patched
 
     db_module.init_db(db_path)
+    # pull_city() backfills history for newly-created cities; keep that a no-op by
+    # default so tests that don't care about it stay offline. Tests that do care
+    # override this with their own monkeypatch.setattr(pull_module, "backfill_city", ...).
+    monkeypatch.setattr(pull_module, "backfill_city", lambda *a, **k: 0)
     return TestClient(app)
 
 
@@ -65,6 +69,18 @@ def test_pull_then_latest_and_history(client, monkeypatch):
     hist = client.get("/api/history", params={"city": "Paris"})
     assert hist.status_code == 200
     assert [r["temperature"] for r in hist.json()] == [20.0, 23.0]
+
+
+def test_pull_backfills_history_for_a_newly_added_city_only(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pull_module, "backfill_city", lambda conn, city, since, **k: calls.append(city["query_name"]) or 0)
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(20.0))
+
+    client.post("/api/pull", params={"city": "Paris"})  # new: should backfill
+    client.post("/api/pull", params={"city": "Paris"})  # already tracked: should not backfill again
+
+    assert calls == ["Paris"]
 
 
 def test_pull_of_unknown_city_returns_404(client, monkeypatch):
@@ -230,3 +246,18 @@ def test_save_rejects_empty_itinerary_and_unknown_city(client, monkeypatch):
 
     assert client.post("/api/itineraries", params={"city": "Paris"}, json={"days": []}).status_code == 422
     assert client.post("/api/itineraries", params={"city": "Nowhere"}, json={"text": "x"}).status_code == 404
+
+
+def test_remove_city_deletes_it_and_its_data(client, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: PARIS_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(20.0))
+    client.post("/api/pull", params={"city": "Paris"})
+    client.post("/api/itineraries", params={"city": "Paris"}, json={"text": "Day 1: walk."})
+
+    assert client.delete("/api/cities", params={"city": "paris"}).status_code == 204
+    assert client.get("/api/cities").json() == []
+    assert client.get("/api/latest", params={"city": "Paris"}).status_code == 404
+    assert client.delete("/api/cities", params={"city": "Paris"}).status_code == 404
+
+    # Re-adding starts fresh rather than picking up the old pulls.
+    assert client.post("/api/pull", params={"city": "Paris"}).json()["metrics"]["pull_count"] == 1

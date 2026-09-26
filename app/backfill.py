@@ -4,14 +4,23 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .weather_api import fetch_hourly_history
 
 
-def local_midnight_utc(city, day):
-    """00:00 on `day` in the city's own timezone, as a UTC datetime. Falls back to
-    UTC midnight if the city has no usable timezone (geocoder returned "auto")."""
+def _city_zone(city):
+    """The city's own tzinfo, falling back to UTC if it has no usable timezone
+    (geocoder returned "auto") or ZoneInfo doesn't recognize it."""
     try:
-        tz = ZoneInfo(city["timezone"])
+        return ZoneInfo(city["timezone"])
     except (ZoneInfoNotFoundError, ValueError, TypeError):
-        tz = timezone.utc
-    return datetime.combine(day, time(0), tzinfo=tz).astimezone(timezone.utc)
+        return timezone.utc
+
+
+def local_midnight_utc(city, day):
+    """00:00 on `day` in the city's own timezone, as a UTC datetime."""
+    return datetime.combine(day, time(0), tzinfo=_city_zone(city)).astimezone(timezone.utc)
+
+
+def local_today(city):
+    """Today's date in the city's own timezone, right now."""
+    return datetime.now(_city_zone(city)).date()
 
 
 def trim_backfill_before(conn, city, since, dry_run=False):

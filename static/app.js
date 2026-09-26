@@ -674,11 +674,50 @@ async function refreshCityList(activeCity) {
   list.innerHTML = "";
   cities.forEach((c) => {
     const li = document.createElement("li");
-    li.textContent = c.display_name;
+    const name = document.createElement("span");
+    name.textContent = c.display_name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove-city";
+    remove.textContent = "×";
+    remove.title = `Remove ${c.display_name}`;
+    remove.setAttribute("aria-label", `Remove ${c.display_name}`);
+    remove.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeCity(c);
+    });
+    li.append(name, remove);
     if (c.query_name === activeCity) li.classList.add("active");
     li.addEventListener("click", () => selectCity(c.query_name));
     list.appendChild(li);
   });
+}
+
+async function removeCity(c) {
+  if (!confirm(`Remove ${c.display_name}? Its stored pulls and saved itineraries will be deleted.`)) return;
+  try {
+    await api(`/api/cities?city=${encodeURIComponent(c.query_name)}`, { method: "DELETE" });
+  } catch (err) {
+    showBanner(`Couldn't remove ${c.display_name}: ${err.message}`, "error");
+    return;
+  }
+  if (c.query_name !== state.currentCity) {
+    refreshCityList(state.currentCity);
+    return;
+  }
+  // Removed the city on screen: switch to the next tracked one, or back to the empty state.
+  const cities = await api("/api/cities");
+  if (cities.length > 0) {
+    selectCity(cities[0].query_name);
+  } else {
+    state.currentCity = null;
+    state.lastPayload = null;
+    el("dashboard").classList.add("hidden");
+    el("tabs").classList.add("hidden");
+    el("empty-state").classList.remove("hidden");
+    hideBanner();
+    refreshCityList(null);
+  }
 }
 
 async function selectCity(city) {

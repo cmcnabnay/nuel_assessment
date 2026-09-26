@@ -187,12 +187,29 @@ main {
 }
 #city-list { list-style: none; padding: 0; margin: 0; }
 #city-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
   padding: 0.5rem 0.75rem;
   border-radius: 12px;
   cursor: pointer;
   font-size: 0.92rem;
 }
 #city-list li:hover { background: var(--glass); }
+#city-list .remove-city {
+  padding: 0 0.4rem;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  line-height: 1.4;
+  opacity: 0;
+}
+#city-list li:hover .remove-city,
+#city-list li.active .remove-city,
+#city-list .remove-city:focus-visible { opacity: 0.7; }
+#city-list .remove-city:hover:not(:disabled) { opacity: 1; color: var(--danger); background: transparent; }
+@media (hover: none) { #city-list .remove-city { opacity: 0.7; } }
 #city-list li.active { background: var(--glass-strong); font-weight: 600; }
 
 .content { flex: 1; min-width: 0; }

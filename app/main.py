@@ -121,6 +121,22 @@ def list_cities():
         conn.close()
 
 
+@app.delete("/api/cities", status_code=204)
+def remove_city(city: str = Query(..., min_length=1)):
+    """Stop tracking `city`, deleting its snapshots and saved itineraries too."""
+    conn = db_module.get_connection()
+    try:
+        row = _get_city_row(conn, city)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"'{city}' is not being tracked.")
+        conn.execute("DELETE FROM snapshots WHERE city_id = ?", (row["id"],))
+        conn.execute("DELETE FROM saved_itineraries WHERE city_id = ?", (row["id"],))
+        conn.execute("DELETE FROM cities WHERE id = ?", (row["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @app.get("/api/search")
 def search(q: str = Query(..., min_length=2)):
     """Search-as-you-type suggestions straight from Open-Meteo geocoding (not stored)."""

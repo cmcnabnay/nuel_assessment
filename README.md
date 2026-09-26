@@ -57,7 +57,17 @@ Weather data gets updated four ways:
 - Let a scheduled pull (e.g. a cron job or systemd timer running the pipeline on an interval) keep every tracked city's history up to date automatically.
 
 **Scheduled Pull**
+The scheduled pull uses a systemd user timer (`weather-pull.timer`, saved to my machine) 
+- Runs `scripts/pull_now.py` automatically every 15 minutes, re-pulling every currently tracked city and storing a fresh snapshot for each. 
 
+- Each pull inserts one new row into the `snapshots` table (temperature, windspeed, humidity, precipitation, weathercode, is_day, the daily and hourly forecast JSON, and the pull's timestamp), tagged `source='live'`. It doesn't touch the `cities` table, since the city was already added there the first time it was pulled or searched.
+
+- It also fires once 5 minutes after login/boot, `Persistent=true` means a missed run (e.g. when the machine was off) fires as soon as the user systemd session is back up. 
+
+- Check status: `systemctl --user status weather-pull.timer`
+- View logs from each run: `journalctl --user -u weather-pull.service`
+- Change the interval: edit `OnUnitActiveSec` in the timer file, then `systemctl --user daemon-reload`
+- Disable it: `systemctl --user disable --now weather-pull.timer`
 
 **Running the pull manually**
 
@@ -252,6 +262,7 @@ main.py
     - Attach status/error: "status" defaults to "ok" but callers can pass "stale" if an error string was passed in
 - Routes
   - GET /api/cities: Runs one query that selects every row in the cities table, sort alphabetically by display name, convert each sqlite3.Row to a plain dict and returns the list 
+  - DELETE /api/cities?city=...: Stops tracking a city. Looks up the city, 404s if it is not tracked, otherwise deletes its snapshots, its saved itineraries, and then the city row itself. The sidebar's × button calls this
   - POST /api/pull: Passes off two arguments to pull_city() (pull.py), conn, the open SQLite connection, so pull_city() can read/write the database itself, city the raw city name string the user typed in
   - GET /api/latest: Determines what is the most recent weather datapoint exists for a city. Looks up whether the city already has a row in the DB, 404s if not, and otherwise runs the exact same _build_latest_payload() used by /api/pull on what is already stored
   - GET /api/history: Looks up the city, then calls _snapshots_for_city() (function that builds the date filtered SQL query). Insead of running it through _build_latest_payload(), it maps each raw row to a dict which serves as the time series data that loadHistory() (app.js) uses to plot the Chart.js graph

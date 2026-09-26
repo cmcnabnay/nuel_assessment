@@ -39,6 +39,14 @@ def conn(tmp_path):
     connection.close()
 
 
+@pytest.fixture(autouse=True)
+def stub_backfill(monkeypatch):
+    # pull_city() backfills history for newly-created cities; keep that a no-op by
+    # default so tests that don't care about it stay offline. Tests that do care
+    # override this with their own monkeypatch.setattr(pull_module, "backfill_city", ...).
+    monkeypatch.setattr(pull_module, "backfill_city", lambda *a, **k: 0)
+
+
 def test_pull_city_creates_city_and_snapshot(conn, monkeypatch):
     monkeypatch.setattr(pull_module, "geocode_city", lambda name: LONDON_GEOCODE)
     monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(15.0))
@@ -66,6 +74,35 @@ def test_pull_city_reuses_existing_city_row(conn, monkeypatch):
 
     snapshots = conn.execute("SELECT * FROM snapshots").fetchall()
     assert len(snapshots) == 2
+
+
+def test_pull_city_backfills_only_when_the_city_is_new(conn, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: LONDON_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(15.0))
+    calls = []
+    monkeypatch.setattr(pull_module, "backfill_city", lambda conn, city, since, **k: calls.append(since) or 0)
+
+    pull_module.pull_city(conn, "London")  # new city: should backfill
+    pull_module.pull_city(conn, "London")  # already tracked: should not backfill again
+
+    assert len(calls) == 1
+    assert calls[0] == pull_module.local_today(LONDON_GEOCODE) - pull_module.timedelta(days=pull_module.BACKFILL_DAYS)
+
+
+def test_pull_city_backfill_failure_does_not_fail_the_pull(conn, monkeypatch):
+    monkeypatch.setattr(pull_module, "geocode_city", lambda name: LONDON_GEOCODE)
+    monkeypatch.setattr(pull_module, "fetch_weather", lambda lat, lon, tz: make_weather(15.0))
+
+    def raise_upstream(*a, **k):
+        raise UpstreamError("history provider down")
+
+    monkeypatch.setattr(pull_module, "backfill_city", raise_upstream)
+
+    city, pulled_at = pull_module.pull_city(conn, "London")
+
+    assert pulled_at  # the live pull above still succeeded
+    snapshots = conn.execute("SELECT * FROM snapshots WHERE city_id = ?", (city["id"],)).fetchall()
+    assert len(snapshots) == 1
 
 
 def test_pull_city_propagates_city_not_found(conn, monkeypatch):
