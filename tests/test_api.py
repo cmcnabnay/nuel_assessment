@@ -35,6 +35,7 @@ def make_weather(temperature):
 def client(tmp_path, monkeypatch):
     db_path = str(tmp_path / "api_test.db")
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "TURSO_DATABASE_URL", None)  # never touch a real Turso DB
     from app.main import app  # imported after DB_PATH is patched
 
     db_module.init_db(db_path)

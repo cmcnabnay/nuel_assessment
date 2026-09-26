@@ -40,7 +40,12 @@ def _get_city_row(conn, name):
 
 
 def _snapshots_for_city(conn, city_id, start=None, end=None, limit=None):
-    query = "SELECT * FROM snapshots WHERE city_id = ?"
+    # Named columns rather than *: the forecast JSON columns add ~2 KB per row, which
+    # adds up over a network connection to Turso and none of the callers use them.
+    query = (
+        "SELECT pulled_at, temperature, precipitation, windspeed, humidity, weathercode, is_day"
+        " FROM snapshots WHERE city_id = ?"
+    )
     params = [city_id]
     if start:
         query += " AND pulled_at >= ?"
